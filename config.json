@@ -1,0 +1,48 @@
+{
+    "RootPath": "Cad4Sim/OrthoModelData",
+    "Folders": [
+        "Scans",
+        "Models",
+        "Mill Jobs",
+        "NC Programs"
+    ],
+    "ArchivePath": "Cad4Sim/Archive",
+    "HoldingPath": "Cad4Sim/Holding",
+    "JournalPath": "Cad4Sim/Journal",
+    "ReportPath": "Cad4Sim/Reports",
+    "ReportTodayFolder": "Today's Report",
+    "ReportArchiveFolder": "Archived Reports",
+    "PdfBrowserPath": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "HomeFolders": {
+        ".stl": "Scans",
+        ".dmt": "Scans",
+        ".jpg": "Scans",
+        ".jpeg": "Scans",
+        ".ort": "Models",
+        ".ortmill": "Mill Jobs",
+        ".pim": "NC Programs",
+        ".ff*": "Models/Stray FitFoot Files"
+    },
+    "HandSortSubfolders": {
+        ".pim": [
+            "Lincoln",
+            "Obama"
+        ]
+    },
+    "IgnorePatterns": [
+        "*.ffs_db",
+        "*.ffs_lock",
+        "*.ffs_tmp"
+    ],
+    "RemoveExtensions": [
+        ".zip"
+    ],
+    "RemoveByFolder": {
+        "NC Programs": [
+            ".pdf"
+        ]
+    },
+    "ArchiveAfterDays": 14,
+    "RemoveMode": "Holding",
+    "HoldingDays": 14
+}
