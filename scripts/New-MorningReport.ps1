@@ -262,7 +262,7 @@ else {
     $targetDir = $archiveDir
 }
 
-# A name Chris can read, e.g. 'File tidy-up 2026-11-10 0200'
+# A name Ben can read, e.g. 'File tidy-up 2026-11-10 0200'
 $reportName = 'File tidy-up ' + $runTime.ToString('yyyy-MM-dd HHmm')
 $pdfFile    = Join-Path $targetDir "$reportName.pdf"
 

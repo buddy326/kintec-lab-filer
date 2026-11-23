@@ -1,8 +1,8 @@
 # kintec-lab-filer
 
-A nightly PowerShell script that tidies the CAD file store in Kintec's lab. It runs on lab machine **CAD5** and tidies all four folders (`Scans`, `Models`, `Mill Jobs`, `NC Programs`). It moves misfiled files into the correct folder, archives finished work, and removes junk. Windows Task Scheduler runs it every night.
+A nightly PowerShell script that tidies the CAD file store in Kintec's lab. It runs on lab machine **CAD4** and tidies all four folders (`Scans`, `Models`, `Mill Jobs`, `NC Programs`). It moves misfiled files into the correct folder, archives finished work, and removes junk. Windows Task Scheduler runs it every night at **2am**, after the lab's last work (sometimes as late as 1am) and before the morning.
 
-This repo is being built and tested on a Mac (M1, PowerShell 7) against a fake copy of the lab folders (`Cad4Sim/`, named before the switch to CAD5). Windows-only behaviour (Task Scheduler, NTFS dates, FreeFileSync, file locks) gets tested later in a Windows 11 ARM VM.
+This repo is being built and tested on a Mac (M1, PowerShell 7) against a fake copy of the lab folders (`Cad4Sim/`). Windows-only behaviour (Task Scheduler, NTFS dates, FreeFileSync, file locks) gets tested later in a Windows 11 ARM VM.
 
 ---
 
@@ -16,7 +16,7 @@ This repo is being built and tested on a Mac (M1, PowerShell 7) against a fake c
 
 ## Must-follow rules for all code
 
-1. **Windows PowerShell 5.1 compatible.** CAD5 probably runs 5.1, not 7 (to confirm). Don't use 7-only syntax: no `??`, no `?:` ternary, no `&&` / `||` between commands, no `ForEach-Object -Parallel`, and no `-AsHashtable` on `ConvertFrom-Json`.
+1. **Windows PowerShell 5.1 compatible.** CAD4 (Windows 11) runs 5.1 out of the box, not 7 (to confirm). Don't use 7-only syntax: no `??`, no `?:` ternary, no `&&` / `||` between commands, no `ForEach-Object -Parallel`, and no `-AsHashtable` on `ConvertFrom-Json`.
 2. **No hard-coded paths.** Build every path with `Join-Path` from the config or a parameter. Nothing like `/Users/...` or `C:\...` in the logic.
 3. **Top level only.** The script lists only the files directly inside the four folders below. It never goes into subfolders and never touches anything outside the four folders. That's an allowlist, not an exclusion list.
 4. **Never lose a file.** Every action is written to a journal. Moves can be undone. "Removed" files go to a holding folder first (deleting outright is a config setting).
@@ -72,7 +72,7 @@ Each extension has one **home folder**. A file found in any of the other three f
 | `.ort` | `Models` |
 | `.ortmill` | `Mill Jobs` |
 | `.pim` | `NC Programs`, but really its `Lincoln` or `Obama` mill subfolder. A `.pim` is the G-code Orthomill writes for the CNC mill, saved next to the `.ortmill` project at 500 to 1,000 KB each. A `.pim` found elsewhere moves to `NC Programs`. One loose at the top of `NC Programs` goes on the review list, because only a person knows which mill it's for (`HandSortSubfolders`). It's never archived. |
-| `.ff*` (any `.FF…` extension) | `Models/Stray FitFoot Files` (per Chris, to see what turns up before deciding) |
+| `.ff*` (any `.FF…` extension) | `Models/Stray FitFoot Files` (per Ben, to see what turns up before deciding) |
 | `.zip` | none: removed from any of the four folders |
 | `.pdf` in `NC Programs` | none: block-map PDFs (printed maps of the milling block), which Ben says can be deleted. Removed from that folder only (`RemoveByFolder`). A `.pdf` anywhere else goes on the review list. |
 
@@ -88,15 +88,16 @@ General rules:
 - **The extension** decides where a file goes. Match extensions case-insensitively (`.STL` = `.stl`).
 - **Any extension not in the table** goes on the **review list** and isn't touched.
 - **Wildcard rules** like `.ff*` apply only when no exact rule matches.
-- **All four folders are tidied on CAD5.** `Mill Jobs` and `NC Programs` will sync one way from CAD5 to CAD4 (Chris is setting it up). CAD5 holds the originals, so tidying them there is safe: the results flow down to CAD4's copies. The filer must never be run against CAD4's copies, because an archived file would come back at the next sync, and a file moved in could be deleted by a mirror sync.
+- **All four folders are tidied on CAD4, at 2am.** `Mill Jobs` and `NC Programs` sync two ways between CAD5 and CAD4 (Ben is setting it up), so the filer's changes on CAD4 carry over to CAD5.
 - **Never touched or reported:** names matching `IgnorePatterns` (`*.ffs_db`, `*.ffs_lock`, `*.ffs_tmp`). These are FreeFileSync's own sync database, lock and temp files, which also match `.ff*`. Moving `sync.ffs_db` would make a Two-way job lose its sync record.
 - **Name collisions:** if a file with the same name already exists at the destination (move, archive or `Holding`), nothing is overwritten. The file stays where it is and goes on the review list.
 - **ZIPs are removed.** Ben wants them deleted. The default is to move them to `Holding`, with outright delete as a config setting.
 - **Holding cleanup:** removed files go into a dated subfolder, `Holding/<YYYY-MM-DD>/`, named after the day they were removed. A date folder more than **14 days** old is deleted, and each delete is journaled. The clock goes by the folder date, not the file's own dates: a move keeps the old dates, so a 90-day-old ZIP would otherwise be deleted the very next night. Dated folders also stop the same ZIP name removed on different days from colliding. The 14 days is a config setting.
 - **Archive:** a file in the right folder that is **older than 14 days** moves to `Archive/<YYYY>/<Folder>/<MM Mon>/`, e.g. `2026/Scans/09 Sep/`. This is Ben's layout.
-  - **Which archive:** there are two, both shared from CAD4 and split by date: `\\wks-lab-cad4\Archive 2012-2021` (`E:\Archive 2012-2021\` on CAD4) and `\\wks-lab-cad4\Archive 2022-Current` (`D:\` on CAD4). Everything archived now is from 2022 or later, so the real `ArchivePath` is `\\wks-lab-cad4\Archive 2022-Current`. The 2012–2021 archive is never touched.
-  - **Month folders:** Ben names them `01 Jan`, `02 Feb` and so on, and only the number matters. An existing folder whose name starts with the month number (`09 Sep`, `09 September`, `09`) is reused. If there's none, `09 Sep` is created. If two match, the first alphabetically is used.
-  - **Network moves:** the filer runs on CAD5, so every archive move is a network copy-then-delete.
+  - **Which archive:** there are two, both shared from CAD4 and split by date: `\\wks-lab-cad4\Archive 2012-2021` (`E:\Archive 2012-2021\` on CAD4) and `\\wks-lab-cad4\Archive 2022-Current` (`D:\` on CAD4). Everything archived now is from 2022 or later, and the filer runs on CAD4, so the real `ArchivePath` is the local `D:\`. The 2012–2021 archive is never touched.
+  - **Month folders:** Ben names them `01 Jan`, `02 Feb` and so on, and only the number matters. An existing folder whose name starts with the month number (`09 Sep`, `09 September`, `09`) is used. If two match, the first alphabetically is used.
+  - **The filer never creates archive folders.** If the year, folder or month folder doesn't exist, the file goes on the review list ("no archive folder for Archive/2026/Scans/10"). If a folder vanishes between the check and the move, the archive is recorded as `Failed` instead of the folder being recreated. This last case is untested. So each month's folders must be made by hand before files can be archived into them.
+  - **Cross-drive moves:** the archive is local, but if the four folders aren't on `D:` too, each archive move is a copy-then-delete between drives rather than an instant rename.
   - **Ben's `NC Programs\Lincoln|Obama\[Month]` layout** isn't used, because nothing is archived from `NC Programs`.
 - **Age = newest of modified date and created date.** Using the newest date protects current work that carries one old date (repeat-order scans, models copied back). Order-number parsing as a third date is skipped for now (see Next steps).
 - FitFoot hard-print `.stl` files are **out of scope for now**. All `.stl` is treated as a scan.
@@ -164,7 +165,7 @@ General rules:
     - **Journal changes:** it now has a `Reason` column. It also records review items (`Result = Review`), and on a quiet night it writes one `Run` / `NothingToDo` row, so "nothing to do" is distinguishable from "didn't run".
     - **Which run:** the report reads the newest filer journal (undo journals are ignored), or `-RunId`.
     - **Output:** the report is a PDF named `File tidy-up <YYYY-MM-DD> <HHmm>.pdf`. The page is built as HTML in the temp folder, printed to PDF with a Chromium browser in headless mode, and the HTML is then deleted. If no PDF can be made, the HTML is saved in its place and the script exits with code 1.
-    - **Folders:** the report goes in `<ReportPath>/Today's Report/`, and whatever was there moves to `Archived Reports/` first, so `Today's Report` only ever holds the newest report. A report rebuilt with `-RunId` goes straight to `Archived Reports/`. The folder names are the `ReportTodayFolder` and `ReportArchiveFolder` settings. Chris reads the reports from this folder, instead of getting them by email.
+    - **Folders:** the report goes in `<ReportPath>/Today's Report/`, and whatever was there moves to `Archived Reports/` first, so `Today's Report` only ever holds the newest report. A report rebuilt with `-RunId` goes straight to `Archived Reports/`. The folder names are the `ReportTodayFolder` and `ReportArchiveFolder` settings. Ben reads the reports from this folder, instead of getting them by email.
     - **Layout:**
       - a status line ("Nothing needs your attention" / "N item(s) need your attention");
       - counts;
@@ -174,10 +175,10 @@ General rules:
     - **Stale warning:** if the newest run is more than 24 hours old, the report says last night's run may not have happened.
     - **Config:**
       - `ReportPath`;
-      - `PdfBrowserPath`. On CAD5 this is Edge, `"C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"`; the sim config points at Chrome on the Mac. If it's blank, only the HTML is made.
+      - `PdfBrowserPath`. On CAD4 this is Edge, `"C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"`; the sim config points at Chrome on the Mac. If it's blank, only the HTML is made.
     - **Tested:** normal, failure, quiet and stale runs. Undo still works with the new journal rows.
     - **Fixed bug:** a plain `[System.Uri]` cast of a path makes a *relative*, empty address on macOS. The browser then printed its new-tab page instead of the report. The address is now built with `UriKind Absolute`, and the script stops with an error if it's still empty. Check the PDF itself, not just the HTML: on the Mac, `qlmanage -t <file.pdf>` renders a preview image.
-    - **macOS quirk:** a failed move can leave a copy at the destination while the original stays put, because .NET on Unix links first and then unlinks. Nothing is lost, and the next night flags it as a name collision. A same-drive move on Windows is atomic. Moves to a network archive share are copy-then-delete, though, so the VM test must check what a locked file does there.
+    - **macOS quirk:** a failed move can leave a copy at the destination while the original stays put, because .NET on Unix links first and then unlinks. Nothing is lost, and the next night flags it as a name collision. A same-drive move on Windows is atomic. Moves to the archive on another drive are copy-then-delete, though, so the VM test must check what a locked file does there.
 
 ```powershell
 ./scripts/Invoke-LabFiler.ps1                               # dry run
@@ -198,10 +199,10 @@ Run it with:
 |---|---|---|---|
 | Scans | `423101 - Jane Doe L.stl` | 2 | leave |
 | Scans | `423101 - Jane Doe R.stl` | 2 | leave |
-| Scans | `421877 - Sam Poe L.stl` | 45 | archive |
+| Scans | `421877 - Sam Poe L.stl` | 45 | review list (no archive folder for its month) |
 | Scans | `Scan-2026-01-10-500001.stl` | created 60, modified 3 | leave (newer date counts) |
 | Models | `118300 - Copied Back - A1M.ort` | created 2, modified ~3200 | leave (copied in recently, old modified date) |
-| Models | `118301 - Both Old - A1M.ort` | created 50, modified ~3200 | archive |
+| Models | `118301 - Both Old - A1M.ort` | created 60, modified ~3200 | archive (into the existing month folder) |
 | Scans | `423102 - Alex Roe.dmt` | 3 | leave |
 | Scans | `423102 - Alex Roe L.jpg` | 3 | leave |
 | Scans | `423103 - Kim Park - A1M.ort` | 1 | move → Models |
@@ -222,8 +223,8 @@ Run it with:
 | Models/Ben - Dev | `test insole.ort` | 200 | **untouched** (subfolder) |
 | Mill Jobs | `423110 - Owen Park.ortmill` | 1 | leave |
 | Mill Jobs | `423111 - Zoe Hart - A1M.ort` | 2 | move → Models |
-| Archive/<year>/Models | `<MM> existing/` (folder, for the month 60 days ago) | — | reused for `420950 - Omar Haddad - A1M.ort`, found by its month number |
-| Mill Jobs | `421500 - Ivy Long.ortmill` | 40 | archive |
+| Archive/<year>/Models | `<MM> existing/` (folder, for the month 60 days ago) | — | used for both 60-day-old `Models` files, found by its month number |
+| Mill Jobs | `421500 - Ivy Long.ortmill` | 40 | review list (no archive folder) |
 | Mill Jobs | `mill export.zip` | 5 | remove |
 | NC Programs | `423112 - Ruth Ellis L.PIM` | 1 | review list (which mill?) |
 | NC Programs | `420800 - Paul Reid.pim` | 40 | review list (never archived) |
@@ -258,7 +259,7 @@ Run it with:
 5. **Journal plus dry run**, then real moves.
 6. **Holding cleanup:** delete `Holding/<YYYY-MM-DD>/` folders more than 14 days old, journaling each delete.
 7. **Undo script** that reverses a run by run ID from the journal.
-8. **Morning report:** done. The PDF goes into a `Today's Report` folder for Chris (see Done so far), instead of being emailed. Email can be added later if Kintec's mail system allows it.
+8. **Morning report:** done. The PDF goes into a `Today's Report` folder for Ben (see Done so far), instead of being emailed. Email can be added later if Kintec's mail system allows it.
 9. ~~**Order-number parsing** as the third date in the age rule.~~ Skipped for now. Age stays the newest of created and modified date. Known risk: a current file that arrives with old dates on both (moved in, or copied back with dates kept) gets archived the next night. It can be brought back with the undo script.
 10. **Windows VM testing:** PowerShell 5.1, Task Scheduler setup script, NTFS dates, file locks, FreeFileSync behaviour.
 
@@ -267,12 +268,11 @@ Run it with:
 ## Open questions (don't block the build)
 
 - ~~What file types live in `NC Programs`?~~ Answered by Ben: `.pim` (in the `Lincoln` / `Obama` subfolders). Stray `.ort` files move to `Models`, and block-map `.pdf` files are deleted.
-- ~~FreeFileSync direction on the workstations.~~ Answered by Chris: the jobs are all Two-way or Mirror (CAD4 → workstation), never Mirror plus Update.
+- ~~FreeFileSync direction on the workstations.~~ Answered by Ben: the jobs are all Two-way or Mirror (CAD4 → workstation), never Mirror plus Update.
   - Both pass CAD4's moves and deletions on, so archived files don't come back. That makes it safe to run against the real `Scans` and `Models`.
   - Edge case: if a Two-way job loses its `sync.ffs_db`, it could copy an archived file back. The next night that file collides with its copy in `Archive` and goes on the review list, so nothing is lost.
-- ~~Do `Mill Jobs` / `NC Programs` sync from CAD5?~~ Answered by Chris: not yet, but they will, one way from CAD5 to CAD4. Decision: the filer runs on CAD5 and tidies all four folders there.
-- **Where do `Scans` and `Models` live?** Are they local on CAD5, or on CAD4 and reached from CAD5 over the network (e.g. the `Z:` drive)? The config has one `RootPath` for all four folders, which only works if they all sit under one parent folder. Moves across the network are copy-then-delete, which matters for locked files.
-- CAD5's hostname, Windows version and PowerShell version.
+- ~~Which machine runs the filer, and when?~~ Answered by Ben: CAD4, at 2am. `Mill Jobs` / `NC Programs` will sync two ways between CAD5 and CAD4.
+- **Where do the four folders live on CAD4?** The local path (behind the `Z:` share) is needed for `RootPath`. The config has one `RootPath` for all four folders, which only works if they all sit under one parent folder.
 - Which Windows account runs the scheduled task?
-- Morning report folder: where should `ReportPath` be, so Chris can open it from his own computer (e.g. a folder on the `Z:` share)? The account that runs the nightly task needs write access to it.
+- Morning report folder: where should `ReportPath` be, so Ben can open it from his own computer (e.g. a folder on the `Z:` share)? The account that runs the nightly task needs write access to it.
 - Can the report show patient names (they're in the filenames), or should it show order numbers only?

@@ -166,7 +166,8 @@ function Test-IgnoredName {
 }
 
 # Month folders in the archive are named like '09 Sep', and only the number matters.
-# An existing folder starting with '09' is reused; otherwise '09 Sep' is used (created when the file moves).
+# Returns the existing folder starting with '09', or $null if there isn't one: the filer never
+# creates archive folders, so a file with nowhere to go ends up on the review list.
 # Answers are remembered, so each archive folder is only listed once per run.
 $monthFolderCache = @{}
 function Get-ArchiveMonthFolder {
@@ -181,7 +182,7 @@ function Get-ArchiveMonthFolder {
         return $monthFolderCache[$key]
     }
 
-    $name   = $month + ' ' + $Date.ToString('MMM', [System.Globalization.CultureInfo]::InvariantCulture)
+    $name   = $null
     $parent = Join-Path (Join-Path $archivePath $Year) $Folder
     if (Test-Path -LiteralPath $parent) {
         # '09 Sep', '09 September' and '09' all count; '090' or '9 Sep' don't
@@ -270,13 +271,20 @@ function Get-FileAction {
         elseif ($ageDays -gt $config.ArchiveAfterDays) {
             # Ben's layout: Archive\<Year>\<Folder>\<Month>\, e.g. 2026\Scans\09 Sep.
             # Year and month come from the file's newest date, i.e. when the work was done.
-            $year          = $newest.ToString('yyyy')
-            $monthFolder   = Get-ArchiveMonthFolder -Year $year -Folder $Folder -Date $newest
-            $archiveFolder = Join-Path (Join-Path (Join-Path $archivePath $year) $Folder) $monthFolder
-            $action      = 'Archive'
-            $destLabel   = "Archive/$year/$Folder/$monthFolder"
-            $destination = Join-Path $archiveFolder $File.Name
-            $reason      = "$ageDays days old -> $destLabel"
+            $year        = $newest.ToString('yyyy')
+            $month       = $newest.ToString('MM')
+            $monthFolder = Get-ArchiveMonthFolder -Year $year -Folder $Folder -Date $newest
+            if ($null -eq $monthFolder) {
+                # Archive folders are only ever made by people, so stop here and ask
+                $reason = "$ageDays days old, but there is no archive folder for Archive/$year/$Folder/$month"
+            }
+            else {
+                $archiveFolder = Join-Path (Join-Path (Join-Path $archivePath $year) $Folder) $monthFolder
+                $action      = 'Archive'
+                $destLabel   = "Archive/$year/$Folder/$monthFolder"
+                $destination = Join-Path $archiveFolder $File.Name
+                $reason      = "$ageDays days old -> $destLabel"
+            }
         }
         else {
             $action = 'Leave'
@@ -409,6 +417,10 @@ foreach ($item in $toDo) {
         else {
             $destFolder = Split-Path -Path $item.Destination -Parent
             if (-not (Test-Path -LiteralPath $destFolder)) {
+                if ($item.Action -eq 'Archive') {
+                    # Archive folders are never created by the filer, even if one vanished since the check
+                    throw "The archive folder no longer exists: $destFolder"
+                }
                 New-Item -ItemType Directory -Path $destFolder -Force | Out-Null
             }
             # Without -Force, Move-Item refuses to overwrite an existing file

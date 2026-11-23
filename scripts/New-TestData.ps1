@@ -56,11 +56,11 @@ $N = 'OrthoModelData/NC Programs'
 # --- Scans ---
 New-SimFile $S '423101 - Jane Doe L.stl'          2    # right place, recent  -> leave
 New-SimFile $S '423101 - Jane Doe R.stl'          2    # right place, recent  -> leave
-New-SimFile $S '421877 - Sam Poe L.stl'           45   # right place, old     -> archive
+New-SimFile $S '421877 - Sam Poe L.stl'           45   # right place, old, no archive folder for its month -> review list
 # Mixed dates, as seen on the real share: age goes by the newer of the two
 New-SimFile $S 'Scan-2026-01-10-500001.stl'       60 -ModifiedDaysOld 3      # edited 3 days ago -> leave
 New-SimFile $M '118300 - Copied Back - A1M.ort'   2  -ModifiedDaysOld 3200   # copied in 2 days ago, modified ~2017 -> leave
-New-SimFile $M '118301 - Both Old - A1M.ort'      50 -ModifiedDaysOld 3200   # both dates old    -> archive
+New-SimFile $M '118301 - Both Old - A1M.ort'      60 -ModifiedDaysOld 3200   # both dates old    -> archive (existing folder)
 New-SimFile $S '423102 - Alex Roe.dmt'            3    # right place, recent  -> leave
 New-SimFile $S '423102 - Alex Roe L.jpg'          3    # right place, recent  -> leave
 New-SimFile $S '423103 - Kim Park - A1M.ort'      1    # wrong folder         -> move to Models
@@ -81,7 +81,7 @@ New-SimFile "$M/Ben - Dev" 'test insole.ort'      200  # subfolder            ->
 # --- Mill Jobs ---
 New-SimFile $J '423110 - Owen Park.ortmill'       1    # right place          -> leave
 New-SimFile $J '423111 - Zoe Hart - A1M.ort'      2    # wrong folder         -> move to Models
-New-SimFile $J '421500 - Ivy Long.ortmill'        40   # right place, old     -> archive
+New-SimFile $J '421500 - Ivy Long.ortmill'        40   # right place, old, no archive folder -> review list
 New-SimFile $J 'mill export.zip'                  5    # zip                  -> remove
 
 # --- Stray FitFoot files and FreeFileSync's own files ---
@@ -108,7 +108,8 @@ New-SimFile 'OrthoModelData' 'notes.txt'          30   # outside the 4 folders -
 
 # --- Archive: a month folder that already exists ---
 # Named '<MM> existing' on purpose: the filer must find it by its number, not by the full name.
-# '420950 - Omar Haddad - A1M.ort' (60 days old) should be archived into it.
+# The two 60-day-old Models files should be archived into it. Every other old file has no
+# archive folder for its month, so it goes on the review list (the filer never creates them).
 $oldDate = (Get-Date).AddDays(-60)
 $existingMonth = 'Archive/' + $oldDate.ToString('yyyy') + '/Models/' + $oldDate.ToString('MM') + ' existing'
 New-Item -ItemType Directory -Path (Join-Path $Path $existingMonth) -Force | Out-Null
