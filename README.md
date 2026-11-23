@@ -30,7 +30,7 @@ This repo is being built and tested on a Mac (M1, PowerShell 7) against a fake c
 ```
 kintec-lab-filer/
 ├── README.md
-├── .gitignore              # contains: Cad4Sim/ (not added yet)
+├── .gitignore              # contains: Cad4Sim/
 ├── config.json             # filing rules, paths and thresholds
 ├── scripts/
 │   ├── New-TestData.ps1    # builds the fake CAD4 tree (done)
