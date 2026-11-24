@@ -332,25 +332,50 @@ if ($fileUri -eq '') {
 $logFile    = Join-Path ([System.IO.Path]::GetTempPath()) 'labfiler-pdf-log.txt'
 $errFile    = Join-Path ([System.IO.Path]::GetTempPath()) 'labfiler-pdf-errors.txt'
 
+# Is this the Windows SYSTEM account (how the nightly task runs)?
+# The browser's sandbox, which locks down the pages it opens, won't start under SYSTEM, and the
+# browser then quits without a word. Turning it off is safe here: the browser only ever opens
+# our own report file, never a website. Normal accounts keep the sandbox.
+$runningAsSystem = $false
+if ([System.Environment]::OSVersion.Platform -eq 'Win32NT') {
+    $runningAsSystem = [System.Security.Principal.WindowsIdentity]::GetCurrent().IsSystem
+}
+
 # Start-Process joins the arguments with spaces, so any with spaces in them need their own quotes
+#   --enable-logging=stderr   the browser writes what it's doing to $errFile, so a failure has messages
 $browserArgs = @(
     '--headless',
     '--disable-gpu',
     '--no-pdf-header-footer',
+    '--enable-logging=stderr',
     "--user-data-dir=`"$profileDir`"",
-    "--print-to-pdf=`"$pdfFile`"",
-    "`"$fileUri`""
-) -join ' '
+    "--print-to-pdf=`"$pdfFile`""
+)
+if ($runningAsSystem) {
+    $browserArgs += '--no-sandbox'
+}
+# The page to print goes last
+$browserArgs = ($browserArgs + "`"$fileUri`"") -join ' '
 
-Start-Process -FilePath $browser -ArgumentList $browserArgs -Wait -NoNewWindow `
-              -RedirectStandardOutput $logFile -RedirectStandardError $errFile
+# -PassThru hands back the finished process, so its exit code can be logged
+$process = Start-Process -FilePath $browser -ArgumentList $browserArgs -Wait -NoNewWindow -PassThru `
+                         -RedirectStandardOutput $logFile -RedirectStandardError $errFile
+
+# The browser can hand the work to a helper process and exit before the PDF is written,
+# so give the PDF up to 30 seconds to appear
+$waited = 0
+while ((-not (Test-Path -LiteralPath $pdfFile)) -and ($waited -lt 30)) {
+    Start-Sleep -Seconds 1
+    $waited++
+}
 
 if (Test-Path -LiteralPath $pdfFile) {
     Remove-Item -LiteralPath $htmlFile
     Write-Host "Report: $pdfFile"
 }
 else {
-    Write-Host "The browser did not make a PDF. Its messages are in $errFile"
+    Write-Host "The browser did not make a PDF (browser exit code: $($process.ExitCode), running as SYSTEM: $runningAsSystem)."
+    Write-Host "Its messages are in $errFile"
     Save-HtmlInstead
     exit 1
 }
