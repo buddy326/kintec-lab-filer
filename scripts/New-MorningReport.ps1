@@ -319,8 +319,10 @@ if (Test-Path -LiteralPath $pdfFile) {
     Remove-Item -LiteralPath $pdfFile
 }
 
-# A separate browser profile, so a browser someone already has open doesn't get in the way
-$profileDir = Join-Path ([System.IO.Path]::GetTempPath()) 'labfiler-pdf-profile'
+# A brand-new browser profile folder for every report. If the folder were shared and another
+# browser (or one left over from an earlier run) still had it open, the new browser would hand
+# the job to that one and quit without making a PDF. [guid]::NewGuid() makes a unique name.
+$profileDir = Join-Path ([System.IO.Path]::GetTempPath()) ('labfiler-pdf-profile-' + [guid]::NewGuid().ToString())
 # UriKind Absolute matters: a plain [System.Uri] cast of '/var/...' on macOS gives an empty
 # relative address, and the browser then prints its new-tab page instead of the report
 $fileUri    = (New-Object System.Uri($htmlFile, [System.UriKind]::Absolute)).AbsoluteUri
@@ -368,6 +370,10 @@ while ((-not (Test-Path -LiteralPath $pdfFile)) -and ($waited -lt 30)) {
     Start-Sleep -Seconds 1
     $waited++
 }
+
+# The profile folder is only needed for this one report. SilentlyContinue: if the browser
+# still has a file in it open, leaving it behind in the temp folder does no harm.
+Remove-Item -LiteralPath $profileDir -Recurse -Force -ErrorAction SilentlyContinue
 
 if (Test-Path -LiteralPath $pdfFile) {
     Remove-Item -LiteralPath $htmlFile
