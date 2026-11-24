@@ -30,14 +30,17 @@ This repo is being built and tested on a Mac (M1, PowerShell 7) against a fake c
 ```
 kintec-lab-filer/
 ├── README.md
-├── .gitignore              # contains: Cad4Sim/
+├── .gitignore              # contains: Cad4Sim/, Logs/ (Logs/ only appears if the config can't be read)
 ├── config.json             # filing rules, paths and thresholds
 ├── scripts/
 │   ├── New-TestData.ps1    # builds the fake CAD4 tree (done)
 │   ├── LabFiler.Common.ps1 # shared helpers, dot-sourced by the scripts
 │   ├── Invoke-LabFiler.ps1 # the filer: dry run by default, -Apply to make changes
 │   ├── Undo-LabFilerRun.ps1 # reverses one run from its journal
-│   └── New-MorningReport.ps1 # turns a run's journal into an HTML + PDF report
+│   ├── New-MorningReport.ps1 # turns a run's journal into an HTML + PDF report
+│   ├── Start-LabFilerNightly.ps1 # what the 2am task runs: filer -Apply, then the report, with a log
+│   └── Install-LabFilerTask.ps1  # run once on CAD4 (as admin) to create the 2am task
+├── Logs/                   # only if the config can't be read: that night's log goes here instead, git-ignored
 └── Cad4Sim/                # fake CAD4 data, generated, git-ignored
     ├── OrthoModelData/
     │   ├── Scans/
@@ -52,7 +55,7 @@ kintec-lab-filer/
     │       └── Manual CNC/          # stays, never touched
     ├── Archive/            # stands in for the archive share
     ├── Holding/            # removed files wait here 14 days, in Holding/<YYYY-MM-DD>/
-    ├── Journal/            # one CSV per run, by month: 2026/11 Nov/2026-11-23_020004 run.csv
+    ├── Journal/            # by month: 2026/11 Nov/2026-11-23_020004 run.csv + 2026-11-23_020004 nightly.log
     └── Reports/
         ├── Today's Report/      # only the newest PDF
         └── Archived Reports/    # every earlier PDF, by month: 2026/11 Nov/
@@ -199,6 +202,23 @@ General rules:
     - **Shared helpers** in `LabFiler.Common.ps1`: `New-RunId`, `ConvertFrom-RunId`, `Get-MonthFolder`, `Get-JournalFile`, `Find-JournalFile`.
     - **Finding runs:** the undo script and `-RunId` work out the month folder from the run ID. The morning report searches all month folders for the newest `* run.csv`, so undo journals are still ignored. A run ID in the old format, or one with no journal, stops with a clear message and exit code 1.
     - **Tested on the Mac:** apply, report, second report (the first moved to `Archived Reports/2026/11 Nov/`), undo, undo of the undo (dry run), report rebuilt with `-RunId`, old-format and missing run IDs. **Re-tested on the Windows VM:** apply, both reports (rotation into `Archived Reports\2026\11 Nov\`) and undo all passed.
+14. Wrote the nightly task scripts:
+    - **`Start-LabFilerNightly.ps1`** is what the task runs: the filer with `-Apply`, then the report. The report runs even if the filer failed, so the failure shows up in it.
+      - **Log:** a scheduled task has no window, so `Start-Transcript` saves everything printed to `<RunId> nightly.log` in the journal's month folder, next to that night's `<RunId> run.csv`. One folder holds everything about a night. The log matters on nights something went wrong, such as Edge failing to make the PDF.
+      - **Fallback:** if the config can't be read or the journal folder doesn't exist, the log goes to `Logs/<YYYY>/<MM Mon>/` next to the scripts instead, and its first line says why. The log's name ends in `.log`, so the report and undo never mistake it for a journal.
+      - **Exit code:** 0 if both steps were fine, otherwise 1. Task Scheduler shows it as the task's "Last Run Result".
+      - Each step's table goes through `Out-Host`, so it only reaches the screen and log, never the exit code. `$LASTEXITCODE` is reset to 0 before each step, because a script that finishes without `exit` leaves the old value.
+    - **`Install-LabFilerTask.ps1`** is run once on CAD4 from an **administrator** PowerShell window. It creates `\Kintec\Lab Filer` in Task Scheduler, and running it again replaces the task. `-Remove` deletes it.
+      - **When:** daily at `-At` (default `2:00 AM`).
+      - **Rules:** run as soon as possible if CAD4 was off at 2am; wake from sleep; never two runs at once; stop after 3 hours; run on battery.
+      - **Command:** `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "<...>\Start-LabFilerNightly.ps1" -ConfigPath "<...>\config.json"`, with full paths. `Bypass` applies to this task only, so CAD4's execution policy doesn't need changing.
+      - **Account:** `-User` defaults to `SYSTEM`: no password, all local drives, but **no network shares**. With a real account it asks for the password, so the task can run while nobody is logged in.
+    - **Tested on the Mac:**
+      - the nightly script ran both steps and wrote the log next to the journal (exit code 0);
+      - a missing config made both steps fail and the script exit with 1, with the log in `Logs/` saying why;
+      - the installer parses, and stops on a non-Windows machine.
+
+      The installer itself still needs testing on the Windows VM.
 
 ```powershell
 ./scripts/Invoke-LabFiler.ps1                               # dry run
@@ -282,7 +302,7 @@ Run it with:
 8. **Morning report:** done. The PDF goes into a `Today's Report` folder for Ben (see Done so far), instead of being emailed. Email can be added later if Kintec's mail system allows it.
 9. ~~**Order-number parsing** as the third date in the age rule.~~ Skipped for now. Age stays the newest of created and modified date. Known risk: a current file that arrives with old dates on both (moved in, or copied back with dates kept) gets archived the next night. It can be brought back with the undo script.
 10. ~~**Windows VM testing:** PowerShell 5.1, NTFS dates, file locks.~~ Done (see Done so far, item 12).
-11. **Task Scheduler setup script:** creates the nightly 2am task on CAD4 (filer with `-Apply`, then the report). Test it in the VM.
+11. **Task Scheduler setup script:** written (see Done so far, item 14). Still to test on the VM: create the task, start it by hand, and check the journal, report and log. In particular, check that **Edge can make the PDF when running as SYSTEM**.
 12. **Cross-drive archive test:** add a second virtual disk as `D:` in the VM. Only needed if the four folders aren't on `D:` on CAD4.
 
 ---
