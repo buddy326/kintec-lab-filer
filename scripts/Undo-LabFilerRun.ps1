@@ -1,5 +1,5 @@
 param(
-    # The run to reverse, e.g. 20261102-220323 (the journal file name without .csv)
+    # The run to reverse, e.g. 2026-11-23_020004 (the start of the journal file's name)
     [Parameter(Mandatory = $true)]
     [string]$RunId,
     [string]$ConfigPath = (Join-Path $PSScriptRoot '../config.json'),
@@ -20,9 +20,14 @@ $configDir   = Split-Path -Path $ConfigPath -Parent
 $config      = Get-Content -Path $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $journalPath = Resolve-ConfigPath $configDir $config.JournalPath
 
-$journalFile = Join-Path $journalPath "$RunId.csv"
-if (-not (Test-Path -LiteralPath $journalFile -PathType Leaf)) {
-    Write-Host "No journal found for run '$RunId': $journalFile"
+if ($null -eq (ConvertFrom-RunId $RunId)) {
+    Write-Host "'$RunId' is not a run ID. Run IDs look like 2026-11-23_020004."
+    exit 1
+}
+# The journal can be a filer run or an earlier undo (an undo can itself be undone)
+$journalFile = Find-JournalFile $journalPath $RunId
+if ($null -eq $journalFile) {
+    Write-Host "No journal found for run '$RunId' in $journalPath"
     exit 1
 }
 
@@ -32,7 +37,7 @@ $rows = @(Import-Csv -LiteralPath $journalFile -Encoding UTF8)
 [array]::Reverse($rows)
 
 $undoStart = Get-Date
-$undoId    = 'undo-' + $undoStart.ToString('yyyyMMdd-HHmmss')
+$undoId    = New-RunId $undoStart
 
 if ($Apply) {
     $mode = 'APPLY (files will be moved back)'
@@ -107,7 +112,12 @@ if (-not $Apply) {
 
 # --- Move files back, writing each step to a new journal ---
 # The undo journal uses the same columns, so an undo can itself be undone
-$undoJournal = Join-Path $journalPath "$undoId.csv"
+# Saved next to the filer journals, e.g. Journal/2026/11 Nov/2026-11-23_214417 undo.csv
+$undoJournal = Get-JournalFile $journalPath $undoId 'undo'
+$undoDir     = Split-Path -Path $undoJournal -Parent
+if (-not (Test-Path -LiteralPath $undoDir)) {
+    New-Item -ItemType Directory -Path $undoDir -Force | Out-Null
+}
 $failed      = 0
 
 foreach ($item in $plan) {

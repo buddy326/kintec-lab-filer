@@ -2,7 +2,7 @@
 
 A nightly PowerShell script that tidies the CAD file store in Kintec's lab. It runs on lab machine **CAD4** and tidies all four folders (`Scans`, `Models`, `Mill Jobs`, `NC Programs`). It moves misfiled files into the correct folder, archives finished work, and removes junk. Windows Task Scheduler runs it every night at **2am**, after the lab's last work (sometimes as late as 1am) and before the morning.
 
-This repo is being built and tested on a Mac (M1, PowerShell 7) against a fake copy of the lab folders (`Cad4Sim/`). Windows-only behaviour (Task Scheduler, NTFS dates, FreeFileSync, file locks) gets tested later in a Windows 11 ARM VM.
+This repo is being built and tested on a Mac (M1, PowerShell 7) against a fake copy of the lab folders (`Cad4Sim/`). Windows behaviour is tested in a Windows 11 ARM VM (UTM) running Windows PowerShell 5.1. See Done so far, item 12.
 
 ---
 
@@ -52,10 +52,10 @@ kintec-lab-filer/
     │       └── Manual CNC/          # stays, never touched
     ├── Archive/            # stands in for the archive share
     ├── Holding/            # removed files wait here 14 days, in Holding/<YYYY-MM-DD>/
-    ├── Journal/            # one CSV per run: <RunId>.csv
+    ├── Journal/            # one CSV per run, by month: 2026/11 Nov/2026-11-23_020004 run.csv
     └── Reports/
         ├── Today's Report/      # only the newest PDF
-        └── Archived Reports/    # every earlier PDF
+        └── Archived Reports/    # every earlier PDF, by month: 2026/11 Nov/
 ```
 
 On the real system, `Models` has six permanent subfolders: `Alex FitFootImport`, `Ben - Dev`, `Foot Forward FF Case Files`, `Matt FF360 Import`, `Texture Insole`, `USB Drive`. The sim includes two of them as decoys.
@@ -139,7 +139,7 @@ General rules:
    - Hidden files (e.g. `Thumbs.db`, `desktop.ini` on Windows) are skipped, because `Get-ChildItem` without `-Force` doesn't list them.
 8. Added the journal and real actions:
    - **Dry run is the default.** Nothing changes unless `-Apply` is passed, and the scheduled task will pass it.
-   - **Journal:** each run writes `Journal/<RunId>.csv` (RunId = start time, `yyyyMMdd-HHmmss`) with the columns RunId, Time, Action, Source, Destination, Result, Error. Each row is written straight after its action.
+   - **Journal:** each run writes `Journal/<YYYY>/<MM Mon>/<RunId> run.csv` (see item 13 for the naming) with the columns RunId, Time, Action, Source, Destination, Result, Error. Each row is written straight after its action.
    - **Failures don't stop the run.** A failed action (e.g. a locked file) is recorded as `Failed` with the error, the run continues, and the script exits with code 1.
    - `Move-Item` without `-Force` never overwrites, which backs up the collision check.
    - Tested: dry run changes nothing; apply matches the answer key; a second apply does nothing; read-only `Scans` gives `Failed` rows and exit 1; `Delete` mode deletes the ZIPs.
@@ -150,10 +150,10 @@ General rules:
    - **Tested:** the test data now includes Holding cases, including the exact-14-day edge.
 
 10. Wrote `scripts/Undo-LabFilerRun.ps1`:
-    - **What it reverses:** it reads `Journal/<RunId>.csv` and, last action first, moves each `Done` file from `Destination` back to `Source`.
+    - **What it reverses:** it finds the run's journal (a filer run or an earlier undo) and, last action first, moves each `Done` file from `Destination` back to `Source`.
     - **Dry run by default:** it changes nothing unless `-Apply` is passed.
     - **What it skips:** purges and `Delete`-mode removes (the file is gone), failed actions, files no longer at their destination, and anything whose original place is occupied. It never overwrites.
-    - **Its own journal:** `Journal/undo-<timestamp>.csv`, with the same columns, so an undo can be undone too.
+    - **Its own journal:** `Journal/<YYYY>/<MM Mon>/<UndoId> undo.csv`, with the same columns, so an undo can be undone too.
     - **Empty folders:** folders left empty in `Archive` stay where they are. An empty `Holding` date folder gets removed by cleanup once it expires.
     - **Tested:**
       - undo restores everything except purged files;
@@ -165,7 +165,7 @@ General rules:
     - **Journal changes:** it now has a `Reason` column. It also records review items (`Result = Review`), and on a quiet night it writes one `Run` / `NothingToDo` row, so "nothing to do" is distinguishable from "didn't run".
     - **Which run:** the report reads the newest filer journal (undo journals are ignored), or `-RunId`.
     - **Output:** the report is a PDF named `File tidy-up <YYYY-MM-DD> <HHmm>.pdf`. The page is built as HTML in the temp folder, printed to PDF with a Chromium browser in headless mode, and the HTML is then deleted. If no PDF can be made, the HTML is saved in its place and the script exits with code 1.
-    - **Folders:** the report goes in `<ReportPath>/Today's Report/`, and whatever was there moves to `Archived Reports/` first, so `Today's Report` only ever holds the newest report. A report rebuilt with `-RunId` goes straight to `Archived Reports/`. The folder names are the `ReportTodayFolder` and `ReportArchiveFolder` settings. Ben reads the reports from this folder, instead of getting them by email.
+    - **Folders:** the report goes in `<ReportPath>/Today's Report/`, and whatever was there moves to `Archived Reports/<YYYY>/<MM Mon>/` first (the month comes from the date in the report's name), so `Today's Report` only ever holds the newest report. A report rebuilt with `-RunId` goes straight to that run's month in `Archived Reports`. The folder names are the `ReportTodayFolder` and `ReportArchiveFolder` settings. Ben reads the reports from this folder, instead of getting them by email.
     - **Layout:**
       - a status line ("Nothing needs your attention" / "N item(s) need your attention");
       - counts;
@@ -179,12 +179,32 @@ General rules:
     - **Tested:** normal, failure, quiet and stale runs. Undo still works with the new journal rows.
     - **Fixed bug:** a plain `[System.Uri]` cast of a path makes a *relative*, empty address on macOS. The browser then printed its new-tab page instead of the report. The address is now built with `UriKind Absolute`, and the script stops with an error if it's still empty. Check the PDF itself, not just the HTML: on the Mac, `qlmanage -t <file.pdf>` renders a preview image.
     - **macOS quirk:** a failed move can leave a copy at the destination while the original stays put, because .NET on Unix links first and then unlinks. Nothing is lost, and the next night flags it as a name collision. A same-drive move on Windows is atomic. Moves to the archive on another drive are copy-then-delete, though, so the VM test must check what a locked file does there.
+12. Tested on Windows 11 (ARM, UTM VM) with **Windows PowerShell 5.1**. The repo was cloned to the VM's own `C:` drive, and only `PdfBrowserPath` was changed to Edge (not committed). The VM is on Pacific time, the same as CAD4 in Vancouver.
+    - **Setup:** scripts need `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` first, because Windows blocks `.ps1` files by default. The scheduled task will need the same.
+    - **Passed:**
+      - **5.1 compatibility:** all scripts ran with no syntax errors.
+      - **Dry run:** the output matched the Mac run and the answer key line for line.
+      - **NTFS dates:** `118300 - Copied Back` (created 2 days ago, modified ~9 years ago) counts as 2 days old.
+      - **Apply:** moves, archives into `09 existing`, removals to Holding and Holding purges all worked.
+      - **Report:** Edge printed the PDF correctly, and the previous report rotated to `Archived Reports`.
+      - **Undo:** 14 actions put back, and the 2 purges skipped as "cannot be restored". A dry run afterwards matched the first plan, minus the purges.
+      - **Locked file:** a file held open with `[System.IO.File]::Open(path, 'Open', 'Read', 'None')` was marked `Failed` ("Applied 13 of 14", exit code 1). The rest of the run carried on, and the report showed the plain-English reason. There was **no duplicate** at the destination: a same-drive move on Windows is all or nothing, so the macOS quirk above doesn't happen here.
+    - **Not tested yet:**
+      - an archive on a second drive (`D:`, as on CAD4), where a move is copy-then-delete;
+      - the Task Scheduler setup.
+13. Made journal and report names readable, and filed them by month:
+    - **Run ID:** the start time as `yyyy-MM-dd_HHmmss`, e.g. `2026-11-23_020004`. It reads as a date, sorts in time order, has no spaces (easy to type after `-RunId`), and keeps the seconds so two runs never share a journal. Undos get the same kind of ID.
+    - **Journal names:** `<RunId> run.csv` for a filer run and `<RunId> undo.csv` for an undo. The kind goes at the end, so runs and undos sort together by time and an undo sits right after the run it reversed.
+    - **Month folders:** journals go in `Journal/<YYYY>/<MM Mon>/` and older reports in `Archived Reports/<YYYY>/<MM Mon>/`, the same layout as Ben's archive. Month names are always English (`InvariantCulture`). The scripts create these folders themselves; the never-create rule is only for the patient-file archive.
+    - **Shared helpers** in `LabFiler.Common.ps1`: `New-RunId`, `ConvertFrom-RunId`, `Get-MonthFolder`, `Get-JournalFile`, `Find-JournalFile`.
+    - **Finding runs:** the undo script and `-RunId` work out the month folder from the run ID. The morning report searches all month folders for the newest `* run.csv`, so undo journals are still ignored. A run ID in the old format, or one with no journal, stops with a clear message and exit code 1.
+    - **Tested on the Mac:** apply, report, second report (the first moved to `Archived Reports/2026/11 Nov/`), undo, undo of the undo (dry run), report rebuilt with `-RunId`, old-format and missing run IDs. Still to re-test on the Windows VM.
 
 ```powershell
 ./scripts/Invoke-LabFiler.ps1                               # dry run
 ./scripts/Invoke-LabFiler.ps1 -Apply                        # make the changes
-./scripts/Undo-LabFilerRun.ps1 -RunId 20261102-220323       # dry run of an undo
-./scripts/Undo-LabFilerRun.ps1 -RunId 20261102-220323 -Apply
+./scripts/Undo-LabFilerRun.ps1 -RunId 2026-11-02_220323       # dry run of an undo
+./scripts/Undo-LabFilerRun.ps1 -RunId 2026-11-02_220323 -Apply
 ./scripts/New-MorningReport.ps1                             # report on the newest run
 ```
 
@@ -261,7 +281,9 @@ Run it with:
 7. **Undo script** that reverses a run by run ID from the journal.
 8. **Morning report:** done. The PDF goes into a `Today's Report` folder for Ben (see Done so far), instead of being emailed. Email can be added later if Kintec's mail system allows it.
 9. ~~**Order-number parsing** as the third date in the age rule.~~ Skipped for now. Age stays the newest of created and modified date. Known risk: a current file that arrives with old dates on both (moved in, or copied back with dates kept) gets archived the next night. It can be brought back with the undo script.
-10. **Windows VM testing:** PowerShell 5.1, Task Scheduler setup script, NTFS dates, file locks, FreeFileSync behaviour.
+10. ~~**Windows VM testing:** PowerShell 5.1, NTFS dates, file locks.~~ Done (see Done so far, item 12).
+11. **Task Scheduler setup script:** creates the nightly 2am task on CAD4 (filer with `-Apply`, then the report). Test it in the VM.
+12. **Cross-drive archive test:** add a second virtual disk as `D:` in the VM. Only needed if the four folders aren't on `D:` on CAD4.
 
 ---
 

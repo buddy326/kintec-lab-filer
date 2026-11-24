@@ -1,5 +1,5 @@
 param(
-    # The run to report on, e.g. 20261102-220323. Defaults to the newest filer run.
+    # The run to report on, e.g. 2026-11-23_020004. Defaults to the newest filer run.
     [string]$RunId = '',
     [string]$ConfigPath = (Join-Path $PSScriptRoot '../config.json')
 )
@@ -41,24 +41,30 @@ foreach ($dir in @($todayDir, $archiveDir)) {
 # Only the normal morning report (no -RunId) replaces Today's Report
 $isMorningReport = ($RunId -eq '')
 if ($isMorningReport) {
-    # Journal names sort by date, so the last one is the newest. Undo journals are not nightly runs.
-    $latest = Get-ChildItem -LiteralPath $journalPath -Filter '*.csv' -File |
-        Where-Object { $_.Name -notlike 'undo-*' } |
+    # Journals sit in year/month folders, so look through all of them (-Recurse).
+    # Names start with the run ID, so sorting by name puts the newest last. Undo journals are not nightly runs.
+    $latest = Get-ChildItem -LiteralPath $journalPath -File -Recurse |
+        Where-Object { $_.Name -like '* run.csv' } |
         Sort-Object Name |
         Select-Object -Last 1
     if ($null -eq $latest) {
         Write-Host "No filer runs found in $journalPath"
         exit 1
     }
-    $RunId = $latest.BaseName
+    # '2026-11-23_020004 run' -> '2026-11-23_020004'
+    $RunId = $latest.BaseName -replace ' run$', ''
 }
-$journalFile = Join-Path $journalPath "$RunId.csv"
-if (-not (Test-Path -LiteralPath $journalFile -PathType Leaf)) {
-    Write-Host "No journal found for run '$RunId': $journalFile"
+$runTime = ConvertFrom-RunId $RunId
+if ($null -eq $runTime) {
+    Write-Host "'$RunId' is not a run ID. Run IDs look like 2026-11-23_020004."
     exit 1
 }
-$rows    = @(Import-Csv -LiteralPath $journalFile -Encoding UTF8)
-$runTime = [datetime]::ParseExact($RunId, 'yyyyMMdd-HHmmss', [System.Globalization.CultureInfo]::InvariantCulture)
+$journalFile = Find-JournalFile $journalPath $RunId
+if ($null -eq $journalFile) {
+    Write-Host "No journal found for run '$RunId' in $journalPath"
+    exit 1
+}
+$rows = @(Import-Csv -LiteralPath $journalFile -Encoding UTF8)
 
 # --- Helpers ---
 
@@ -251,15 +257,34 @@ $body
 if ($isMorningReport) {
     # Yesterday's report (and anything else left in Today's Report) moves to the archive first.
     # -Force replaces a same-named archived copy: reports can always be rebuilt from the journal.
+    # Archived reports are kept in year/month folders, e.g. Archived Reports/2026/11 Nov/.
     foreach ($old in (Get-ChildItem -LiteralPath $todayDir -File)) {
-        Move-Item -LiteralPath $old.FullName -Destination (Join-Path $archiveDir $old.Name) -Force
+        # The month comes from the date in the name ('File tidy-up 2026-11-22 0204.pdf').
+        # A file named some other way goes by its modified date instead.
+        $oldDate = $old.LastWriteTime
+        if ($old.Name -match '(\d{4}-\d{2}-\d{2}) \d{4}') {
+            $parsed = [datetime]::MinValue
+            if ([datetime]::TryParseExact($Matches[1], 'yyyy-MM-dd',
+                    [System.Globalization.CultureInfo]::InvariantCulture,
+                    [System.Globalization.DateTimeStyles]::None, [ref]$parsed)) {
+                $oldDate = $parsed
+            }
+        }
+        $oldTarget = Get-MonthFolder $archiveDir $oldDate
+        if (-not (Test-Path -LiteralPath $oldTarget)) {
+            New-Item -ItemType Directory -Path $oldTarget -Force | Out-Null
+        }
+        Move-Item -LiteralPath $old.FullName -Destination (Join-Path $oldTarget $old.Name) -Force
         Write-Host "Archived old report: $($old.Name)"
     }
     $targetDir = $todayDir
 }
 else {
-    # A report rebuilt for an older run goes straight to the archive
-    $targetDir = $archiveDir
+    # A report rebuilt for an older run goes straight to that run's month in the archive
+    $targetDir = Get-MonthFolder $archiveDir $runTime
+    if (-not (Test-Path -LiteralPath $targetDir)) {
+        New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+    }
 }
 
 # A name Ben can read, e.g. 'File tidy-up 2026-11-10 0200'

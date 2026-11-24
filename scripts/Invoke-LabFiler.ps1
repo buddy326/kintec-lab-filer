@@ -119,7 +119,7 @@ if ($problems.Count -gt 0) {
 
 # One timestamp for the whole run, so every file is judged against the same moment
 $runStart = Get-Date
-$runId    = $runStart.ToString('yyyyMMdd-HHmmss')
+$runId    = New-RunId $runStart
 $runDay   = $runStart.ToString('yyyy-MM-dd')
 
 if ($Apply) {
@@ -378,7 +378,12 @@ if (-not $Apply) {
 }
 
 # --- Apply the actions, writing each one to the journal ---
-$journalFile = Join-Path $journalPath "$runId.csv"
+# Journals are kept in year/month folders, e.g. Journal/2026/11 Nov/2026-11-23_020004 run.csv
+$journalFile = Get-JournalFile $journalPath $runId 'run'
+$journalDir  = Split-Path -Path $journalFile -Parent
+if (-not (Test-Path -LiteralPath $journalDir)) {
+    New-Item -ItemType Directory -Path $journalDir -Force | Out-Null
+}
 $toDo        = $results | Where-Object { @('Move', 'Archive', 'Remove', 'Purge') -contains $_.Action }
 $reviews     = $results | Where-Object { $_.Action -eq 'Review' }
 $failed      = 0
