@@ -198,7 +198,7 @@ General rules:
     - **Month folders:** journals go in `Journal/<YYYY>/<MM Mon>/` and older reports in `Archived Reports/<YYYY>/<MM Mon>/`, the same layout as Ben's archive. Month names are always English (`InvariantCulture`). The scripts create these folders themselves; the never-create rule is only for the patient-file archive.
     - **Shared helpers** in `LabFiler.Common.ps1`: `New-RunId`, `ConvertFrom-RunId`, `Get-MonthFolder`, `Get-JournalFile`, `Find-JournalFile`.
     - **Finding runs:** the undo script and `-RunId` work out the month folder from the run ID. The morning report searches all month folders for the newest `* run.csv`, so undo journals are still ignored. A run ID in the old format, or one with no journal, stops with a clear message and exit code 1.
-    - **Tested on the Mac:** apply, report, second report (the first moved to `Archived Reports/2026/11 Nov/`), undo, undo of the undo (dry run), report rebuilt with `-RunId`, old-format and missing run IDs. Still to re-test on the Windows VM.
+    - **Tested on the Mac:** apply, report, second report (the first moved to `Archived Reports/2026/11 Nov/`), undo, undo of the undo (dry run), report rebuilt with `-RunId`, old-format and missing run IDs. **Re-tested on the Windows VM:** apply, both reports (rotation into `Archived Reports\2026\11 Nov\`) and undo all passed.
 
 ```powershell
 ./scripts/Invoke-LabFiler.ps1                               # dry run
