@@ -97,16 +97,29 @@ if ($User -eq 'SYSTEM') {
                            -Settings $settings -Principal $runAs -Description $description -Force | Out-Null
 }
 else {
-    # A real account must store its password so the task can run while nobody is logged in
-    $credential = Get-Credential -UserName $User -Message "Password for $User (the nightly task runs as this account)"
-    if ($null -eq $credential) {
+    # A real account must store its password so the task can run while nobody is logged in.
+    # Read-Host asks in this window (Get-Credential opens a pop-up, which can hide behind it).
+    # -AsSecureString shows * instead of the letters typed.
+    $securePassword = Read-Host -AsSecureString "Windows password for $User (the nightly task runs as this account)"
+    if ($securePassword.Length -eq 0) {
         Write-Host 'No password given, so the task was not created.'
         exit 1
     }
-    Register-ScheduledTask -TaskName $TaskName -TaskPath $taskPath -Action $action -Trigger $trigger `
-                           -Settings $settings -Description $description -RunLevel Highest `
-                           -User $credential.UserName `
-                           -Password $credential.GetNetworkCredential().Password -Force | Out-Null
+    # Register-ScheduledTask wants the password as plain text; a PSCredential converts it
+    $credential = New-Object System.Management.Automation.PSCredential($User, $securePassword)
+    try {
+        Register-ScheduledTask -TaskName $TaskName -TaskPath $taskPath -Action $action -Trigger $trigger `
+                               -Settings $settings -Description $description -RunLevel Highest `
+                               -User $credential.UserName `
+                               -Password $credential.GetNetworkCredential().Password `
+                               -Force -ErrorAction Stop | Out-Null
+    }
+    catch {
+        # Windows checks the user name and password here, and refuses if either is wrong
+        Write-Host "The task was not created: $($_.Exception.Message)"
+        Write-Host "Check the user name (run 'whoami' to see yours) and the password, then try again."
+        exit 1
+    }
 }
 
 # --- Summary ---
