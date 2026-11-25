@@ -3,10 +3,11 @@ param(
     [string]$At = '2:00 AM',
     [string]$TaskName = 'Lab Filer',
     [string]$ConfigPath = (Join-Path $PSScriptRoot '../config.json'),
-    # SYSTEM needs no password and can use all of CAD4's own drives, but no network shares.
-    # Give a real account (e.g. 'KINTEC\labadmin') if the reports or archive are on another PC;
-    # the script then asks for its password.
-    [string]$User = 'SYSTEM',
+    # The Windows account the task runs as. Defaults to whoever runs this script, e.g. 'CAD4\Ben'.
+    # The script asks for its password once, so the task can run while nobody is logged in.
+    # 'SYSTEM' needs no password, but Edge won't start under SYSTEM (exit code 1002), so the
+    # morning report comes out as HTML instead of PDF. SYSTEM also can't reach network folders.
+    [string]$User = "$env:USERDOMAIN\$env:USERNAME",
     # Removes the task instead of creating it
     [switch]$Remove
 )

@@ -212,13 +212,15 @@ General rules:
       - **When:** daily at `-At` (default `2:00 AM`).
       - **Rules:** run as soon as possible if CAD4 was off at 2am; wake from sleep; never two runs at once; stop after 3 hours; run on battery.
       - **Command:** `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "<...>\Start-LabFilerNightly.ps1" -ConfigPath "<...>\config.json"`, with full paths. `Bypass` applies to this task only, so CAD4's execution policy doesn't need changing.
-      - **Account:** `-User` defaults to `SYSTEM`: no password, all local drives, but **no network shares**. With a real account it asks for the password, so the task can run while nobody is logged in.
+      - **Account:** `-User` defaults to whoever runs the installer. It asks for that account's password once, in the PowerShell window, and Windows stores it so the task runs while nobody is logged in. A wrong password is refused straight away.
+      - **Not SYSTEM:** tested on the VM, Edge won't start under SYSTEM (exit code 1002, no messages), even with `--no-sandbox` and a fresh profile, so the report came out as HTML. SYSTEM also can't reach network folders. `-User SYSTEM` still works if a PDF isn't needed.
     - **Tested on the Mac:**
       - the nightly script ran both steps and wrote the log next to the journal (exit code 0);
       - a missing config made both steps fail and the script exit with 1, with the log in `Logs/` saying why;
       - the installer parses, and stops on a non-Windows machine.
 
-      The installer itself still needs testing on the Windows VM.
+    - **Tested on the Windows VM:** installed the task under the VM's own account, started it by hand: `LastTaskResult 0`, filer applied 16 of 16, the log next to the journal, and a real PDF in Today's Report. Still to check: a 2am run with nobody logged in.
+    - **Report changes from this testing:** Edge's exit code goes in the log, Edge writes its own log (`--enable-logging=stderr`), each report uses a new browser profile folder (deleted afterwards), and the script waits up to 30 seconds for the PDF to appear.
 
 ```powershell
 ./scripts/Invoke-LabFiler.ps1                               # dry run
@@ -302,7 +304,7 @@ Run it with:
 8. **Morning report:** done. The PDF goes into a `Today's Report` folder for Ben (see Done so far), instead of being emailed. Email can be added later if Kintec's mail system allows it.
 9. ~~**Order-number parsing** as the third date in the age rule.~~ Skipped for now. Age stays the newest of created and modified date. Known risk: a current file that arrives with old dates on both (moved in, or copied back with dates kept) gets archived the next night. It can be brought back with the undo script.
 10. ~~**Windows VM testing:** PowerShell 5.1, NTFS dates, file locks.~~ Done (see Done so far, item 12).
-11. **Task Scheduler setup script:** written (see Done so far, item 14). Still to test on the VM: create the task, start it by hand, and check the journal, report and log. In particular, check that **Edge can make the PDF when running as SYSTEM**.
+11. ~~**Task Scheduler setup script.**~~ Done and tested on the VM (see Done so far, item 14). It has to run as a real Windows account, not SYSTEM. Still to check: an overnight 2am run with nobody logged in.
 12. **Cross-drive archive test:** add a second virtual disk as `D:` in the VM. Only needed if the four folders aren't on `D:` on CAD4.
 
 ---
@@ -315,6 +317,6 @@ Run it with:
   - Edge case: if a Two-way job loses its `sync.ffs_db`, it could copy an archived file back. The next night that file collides with its copy in `Archive` and goes on the review list, so nothing is lost.
 - ~~Which machine runs the filer, and when?~~ Answered by Ben: CAD4, at 2am. `Mill Jobs` / `NC Programs` will sync two ways between CAD5 and CAD4.
 - **Where do the four folders live on CAD4?** The local path (behind the `Z:` share) is needed for `RootPath`. The config has one `RootPath` for all four folders, which only works if they all sit under one parent folder.
-- Which Windows account runs the scheduled task?
+- Which Windows account runs the scheduled task? It must be a real account, not SYSTEM (Edge can't make the PDF under SYSTEM). Ideally a dedicated one, e.g. `CAD4\labfiler`, whose password doesn't change, because a changed password stops the task until the installer is run again. It needs write access to the four folders, the archive, Holding, the journal and the report folder.
 - Morning report folder: where should `ReportPath` be, so Ben can open it from his own computer (e.g. a folder on the `Z:` share)? The account that runs the nightly task needs write access to it.
 - Can the report show patient names (they're in the filenames), or should it show order numbers only?
