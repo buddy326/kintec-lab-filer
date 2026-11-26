@@ -4,7 +4,230 @@ A nightly PowerShell script that tidies the CAD file store in Kintec's lab. It r
 
 This repo is being built and tested on a Mac (M1, PowerShell 7) against a fake copy of the lab folders (`Cad4Sim/`). Windows behaviour is tested in a Windows 11 ARM VM (UTM) running Windows PowerShell 5.1. See Done so far, item 12.
 
+**Status (2026-11-25):** built and tested, including as a Windows scheduled task on a test VM. **Not yet installed on CAD4.** The next step is the setup below.
+
 ---
+
+## What it does, in short
+
+Every night at 2am, on CAD4:
+
+1. **The filer** (`Invoke-LabFiler.ps1 -Apply`) looks at the files directly inside `Scans`, `Models`, `Mill Jobs` and `NC Programs`. It never looks in their subfolders. Each file gets one action:
+
+   | Action | What happens |
+   |---|---|
+   | **Leave** | it's in the right folder and recent: nothing happens |
+   | **Move** | it's in the wrong folder, so it moves to its home folder (e.g. a `.stl` in `Models` goes to `Scans`) |
+   | **Archive** | it's in the right folder but more than 14 days old, so it moves to Ben's archive, `<Year>\<Folder>\<MM Mon>\` |
+   | **Remove** | it's junk (`.zip` anywhere, `.pdf` in `NC Programs`), so it moves to `Holding\<date>\`, where it's deleted after 7 days |
+   | **Review** | the filer isn't sure (unknown file type, no archive folder for that month, a name clash): nothing happens, and it's listed in the report for a person to look at |
+
+2. **The journal** records every action in a CSV file, as it happens. Any night can be undone from its journal.
+3. **The morning report**, a PDF, goes into a `Today's Report` folder. The previous one moves to `Archived Reports`. It says what was done and what needs a person.
+
+**Safety:**
+- **Nothing is ever overwritten.** If a file with the same name is already at the destination, the file stays put and goes on the review list.
+- **The filer never creates archive folders.** It only uses the ones Ben has made.
+- **Junk sits in Holding for 7 days** before it's deleted.
+- **Every move can be undone.**
+
+The rules (which extension belongs where, the day counts, what's junk) are all in `config.json`, not in the code. See [Filing rules](#filing-rules-current-will-grow) for the details.
+
+---
+
+## Installing on CAD4 (step by step)
+
+This is for whoever sets it up in person. Allow about two hours with Ben, most of it for reading through the first dry run together.
+
+**Privacy:** the dry-run output, the journals and the reports all contain **patient names**, because they're in the filenames. Keep them on CAD4. Don't email them, copy them off the machine, or add them to this repo.
+
+### Step 0: Get answers from Ben first
+
+These decide what goes in the config. See also [Open questions](#open-questions-dont-block-the-build).
+
+| Question | Used for |
+|---|---|
+| Where are `Scans`, `Models`, `Mill Jobs` and `NC Programs` on CAD4's own drives? (Not the `Z:` share letter, but the real local path behind it, e.g. `D:\OrthoModelData`.) They must all be in **one** parent folder. | `RootPath` |
+| The archive is `D:\` on CAD4 (shared as `Archive 2022-Current`). Are the year folders directly in it, i.e. `D:\2026\Scans\11 Nov\`? | `ArchivePath` |
+| Where should Holding, the journal and the scripts live? Somewhere that isn't one of the four folders and isn't inside the archive's year folders, e.g. `C:\LabFiler\`. Holding on the **same drive** as the four folders makes its moves instant. | `HoldingPath`, `JournalPath` |
+| Where should the reports go, so Ben can open them from his own computer (e.g. a folder on the `Z:` share)? | `ReportPath` |
+| **Which Windows account** runs the nightly task? It must be a real account with a password, **not SYSTEM**, because Edge can't make the PDF under SYSTEM. Best is a dedicated account (e.g. `CAD4\labfiler`) whose password **never expires**: if the password changes, the task stops until the installer is run again. It needs read and write access to all of the folders above. | `-User` when installing |
+| Are the archive month folders made for the months that need them? Files whose month folder is missing go on the review list instead of being archived. | Before the first run |
+
+### Step 1: Check CAD4
+
+Open **Windows PowerShell** (Start → type `powershell` → Windows PowerShell). Use PowerShell, not Command Prompt: the commands below don't work in `cmd`.
+
+```powershell
+$PSVersionTable.PSVersion          # should say 5.1
+Test-Path 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'   # should say True
+```
+
+If Edge is somewhere else, find `msedge.exe` and note its full path for the config.
+
+### Step 2: Put the scripts on CAD4
+
+Put them in the folder agreed with Ben, e.g. `C:\LabFiler\kintec-lab-filer`. Don't use your own user folder (`C:\Users\<you>\...`): the task's account may not be able to read it.
+
+- **With git:** `cd C:\LabFiler`, then `git clone https://github.com/buddy326/kintec-lab-filer.git` (ask Aman for access).
+- **Without git:** on GitHub, **Code → Download ZIP**, then extract it to `C:\LabFiler\kintec-lab-filer`. Windows marks downloaded scripts as unsafe, so unblock them:
+  ```powershell
+  Get-ChildItem C:\LabFiler\kintec-lab-filer -Recurse | Unblock-File
+  ```
+
+**Allow scripts to run (once per account).** Out of the box, Windows refuses to run any `.ps1` file ("running scripts is disabled on this system"). This setting, the *execution policy*, lets scripts made on this computer run, while downloaded ones still need unblocking. `-Scope CurrentUser` means it only changes your own account and doesn't need an administrator. The nightly task doesn't need it: it starts PowerShell with `-ExecutionPolicy Bypass`.
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+**Go into the project folder.** All the commands from here on are run from this folder (`.\scripts\...` means "the scripts folder inside the one I'm in"):
+
+```powershell
+cd C:\LabFiler\kintec-lab-filer
+```
+
+### Step 3: Create the folders the filer needs
+
+The filer **refuses to start** if any of these are missing. That's deliberate: a typo in a path stops it, rather than files going somewhere new.
+
+- the four folders under `RootPath` (they already exist);
+- `ArchivePath` (already exists: Ben's archive);
+- `HoldingPath`: make it, e.g. `New-Item -ItemType Directory C:\LabFiler\Holding`;
+- `JournalPath`: make it, e.g. `New-Item -ItemType Directory C:\LabFiler\Journal`.
+- any **subfolder home** in the config's `HomeFolders`. Today that's only `Models\Stray FitFoot Files`, where stray `.ff*` FitFoot files go. Check with Ben that he's happy for it to appear in `Models`, then make it, e.g. `New-Item -ItemType Directory 'D:\OrthoModelData\Models\Stray FitFoot Files'` (the quotes are needed because of the spaces).
+
+The scripts make everything else themselves: the report folders, the month folders inside the journal, and the date folders inside Holding.
+
+### Step 4: Write the CAD4 config
+
+The `config.json` in the repo points at the test data (`Cad4Sim/...`). On CAD4, open it with `notepad config.json` and change the **paths** to the real ones. Leave the filing rules as they are.
+
+```json
+"RootPath":       "D:\\OrthoModelData",
+"ArchivePath":    "D:\\",
+"HoldingPath":    "C:\\LabFiler\\Holding",
+"JournalPath":    "C:\\LabFiler\\Journal",
+"ReportPath":     "D:\\OrthoModelData\\Lab Filer Reports",
+"PdfBrowserPath": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+```
+
+These are **example paths**: use Ben's answers from step 0.
+
+- **Every `\` must be written as `\\`.** That's how JSON writes a backslash. A single `\` makes the config fail to load.
+- JSON allows no comments. Keep the quotes and commas exactly as they are.
+- **Don't commit this file** back to the repo. It's CAD4's own copy. When updating the scripts later with git, use `git stash`, `git pull`, `git stash pop` to keep it. If you're using ZIPs, keep a copy of `config.json` and put it back after extracting.
+
+### Step 5: Dry run (changes nothing)
+
+```powershell
+.\scripts\Invoke-LabFiler.ps1 *> dry-run.txt
+notepad dry-run.txt
+```
+
+Without `-Apply`, the filer only reports what it **would** do. `*>` saves everything it prints into `dry-run.txt`, which may be long on the real folders.
+
+1. **If it starts with `Config check failed`,** the lines below say what's wrong (usually a path or a missing `\\`). Fix `config.json` and run it again.
+2. **Read the table through with Ben.** Look for:
+   - **Archive:** are these really finished work? Is the destination month right?
+   - **Move:** is each file really in the wrong folder?
+   - **Remove:** is it all junk?
+   - **Review with "no archive folder for ...":** Ben makes those month folders, then you dry-run again.
+   - **Review with "no filing rule for .xyz":** a file type the rules don't cover. It's left alone, which is fine. If Ben wants a rule for it, add it to `HomeFolders` or `RemoveExtensions` in `config.json`.
+3. Delete `dry-run.txt` afterwards, because it has patient names in it.
+
+Repeat until Ben is happy with the plan.
+
+### Step 6: First real run, with Ben watching
+
+```powershell
+.\scripts\Invoke-LabFiler.ps1 -Apply
+.\scripts\New-MorningReport.ps1
+```
+
+- The filer ends with `Applied N of N action(s). Journal: ...`. Note the **run ID**: the start of the journal file's name, e.g. `2026-12-02_143005`.
+- Open the PDF in the report folder's `Today's Report` folder and check it with Ben.
+- **To reverse the whole run:**
+  ```powershell
+  .\scripts\Undo-LabFilerRun.ps1 -RunId 2026-12-02_143005          # shows what it would put back
+  .\scripts\Undo-LabFilerRun.ps1 -RunId 2026-12-02_143005 -Apply   # puts it back
+  ```
+  Everything comes back except Holding files already deleted. On the first night there are none.
+
+### Step 7: Install the nightly task
+
+Open an **administrator** PowerShell window (right-click Windows PowerShell → **Run as administrator**), then:
+
+```powershell
+cd C:\LabFiler\kintec-lab-filer
+.\scripts\Install-LabFilerTask.ps1 -User 'CAD4\labfiler'
+```
+
+- Use the account agreed with Ben. Without `-User`, the task runs as whoever is installing it, which is probably not what you want on CAD4. Run `whoami` to see how Windows writes an account name.
+- It asks for that account's **Windows password** in the window (you'll see `*` as you type). A Microsoft-account sign-in needs its password, not the PIN. Windows checks it straight away and refuses a wrong one.
+- It creates **Task Scheduler → Task Scheduler Library → Kintec → Lab Filer**, running daily at 2:00 AM whether anyone is logged in or not. To pick another time, add `-At '3:00 AM'`.
+- Running it again replaces the task. Do that whenever the account's password changes.
+
+### Step 8: Test the task
+
+This is a **real run** (`-Apply`). After step 6 there's usually little left for it to do.
+
+```powershell
+Start-ScheduledTask -TaskPath '\Kintec\' -TaskName 'Lab Filer'
+# wait a minute
+Get-ScheduledTaskInfo -TaskPath '\Kintec\' -TaskName 'Lab Filer'
+```
+
+- `LastTaskResult : 0` means **SUCCESS**. Check that a new PDF is in `Today's Report`. (Windows only shows a number here: 0 = SUCCESS, 1 = FAILED. The nightly log spells it out in words.)
+- `267009` means it's still running; wait and check again.
+- `1` means something needs a look. See [Troubleshooting](#troubleshooting).
+
+### Step 9: Check the next morning
+
+Look for a report named for about 2:00 AM, and `LastRunTime` around 2:00 AM with `LastTaskResult : 0`. That proves it runs with nobody logged in. It's done after that.
+
+---
+
+## Day to day
+
+- **Ben reads the report** in `Today's Report` each morning. "Nothing needs your attention" means there's nothing to do.
+- **Review items** are left exactly where they are. Someone sorts them by hand, or adds a rule to `config.json`.
+- **Archive month folders:** the filer only archives into month folders that exist. Make each month's folders (`<Year>\Scans\<MM Mon>`, `<Year>\Models\<MM Mon>`, and so on) in good time, e.g. a whole year at once. Until a folder exists, its files go on the review list every night. Nothing is lost, and they're archived the first night after the folder appears.
+- **Undo a night:** find its run ID (the journal file name in `Journal\<Year>\<MM Mon>\`), then run `Undo-LabFilerRun.ps1` as in step 6.
+- **Pause it** (e.g. during a migration), from an administrator window:
+  ```powershell
+  Disable-ScheduledTask -TaskPath '\Kintec\' -TaskName 'Lab Filer'
+  Enable-ScheduledTask  -TaskPath '\Kintec\' -TaskName 'Lab Filer'
+  ```
+- **Remove it completely:** `.\scripts\Install-LabFilerTask.ps1 -Remove`
+- **Change a rule or a day count:** edit `config.json`, then do a dry run (step 5) to check it before the next 2am run.
+
+---
+
+## Troubleshooting
+
+Each night writes a log next to its journal: `Journal\<Year>\<MM Mon>\<RunId> nightly.log`. That's the first place to look.
+
+| What you see | What it means / what to do |
+|---|---|
+| `LastTaskResult : 1` | **FAILED.** Open that night's `nightly.log`. It ends with `Filer: SUCCESS / FAILED`, `Report: ...` and `Overall: ...`, and the lines above say why. |
+| `LastTaskResult : 267011` | The task has never run yet. |
+| The report is an `.html` file, not a `.pdf` | Edge couldn't make the PDF. The log says `browser exit code: ...`. Check `PdfBrowserPath`. If the log says `running as SYSTEM: True`, re-install with a real account (step 7). |
+| No log in `Journal`, but one in a `Logs` folder next to `scripts` | The config couldn't be read, or `JournalPath` doesn't exist. The log's first line says which. |
+| `Config check failed` | It lists every problem: usually a folder that doesn't exist or a path missing `\\`. Nothing was changed. |
+| The report says last night's run **may not have happened** | The newest run is more than a day old. CAD4 was off, or the task's password has changed (re-run step 7). Check `Get-ScheduledTaskInfo`. |
+| `Failed` rows in the report | That file couldn't be moved, usually because it was open in another program. Nothing was lost, and it's tried again the next night. |
+| `no archive folder for Archive/2026/Scans/10` | Make that month folder (see Day to day). |
+| `running scripts is disabled on this system` | Run the `Set-ExecutionPolicy` line from step 2. If that's blocked too, run the script with `powershell -ExecutionPolicy Bypass -File .\scripts\<name>.ps1`. |
+| Installer: `The user name or password is incorrect` | Check the name with `whoami` and type the password again. |
+| The task won't start: "not granted the requested logon type" | The account needs the **Log on as a batch job** right: `secpol.msc` → Local Policies → User Rights Assignment. |
+
+---
+
+# Development notes
+
+Everything below is the build history and design notes, for whoever changes the code.
+
 
 ## How we work on this
 
@@ -54,7 +277,7 @@ kintec-lab-filer/
     │       ├── Obama/               # mill subfolder: .pim files go here (by hand)
     │       └── Manual CNC/          # stays, never touched
     ├── Archive/            # stands in for the archive share
-    ├── Holding/            # removed files wait here 14 days, in Holding/<YYYY-MM-DD>/
+    ├── Holding/            # removed files wait here 7 days, in Holding/<YYYY-MM-DD>/
     ├── Journal/            # by month: 2026/11 Nov/2026-11-23_020004 run.csv + 2026-11-23_020004 nightly.log
     └── Reports/
         ├── Today's Report/      # only the newest PDF
@@ -95,7 +318,7 @@ General rules:
 - **Never touched or reported:** names matching `IgnorePatterns` (`*.ffs_db`, `*.ffs_lock`, `*.ffs_tmp`). These are FreeFileSync's own sync database, lock and temp files, which also match `.ff*`. Moving `sync.ffs_db` would make a Two-way job lose its sync record.
 - **Name collisions:** if a file with the same name already exists at the destination (move, archive or `Holding`), nothing is overwritten. The file stays where it is and goes on the review list.
 - **ZIPs are removed.** Ben wants them deleted. The default is to move them to `Holding`, with outright delete as a config setting.
-- **Holding cleanup:** removed files go into a dated subfolder, `Holding/<YYYY-MM-DD>/`, named after the day they were removed. A date folder more than **14 days** old is deleted, and each delete is journaled. The clock goes by the folder date, not the file's own dates: a move keeps the old dates, so a 90-day-old ZIP would otherwise be deleted the very next night. Dated folders also stop the same ZIP name removed on different days from colliding. The 14 days is a config setting.
+- **Holding cleanup:** removed files go into a dated subfolder, `Holding/<YYYY-MM-DD>/`, named after the day they were removed. A date folder more than **7 days** old is deleted, and each delete is journaled. The clock goes by the folder date, not the file's own dates: a move keeps the old dates, so a 90-day-old ZIP would otherwise be deleted the very next night. Dated folders also stop the same ZIP name removed on different days from colliding. The 7 days is the `HoldingDays` config setting (changed from 14 to 7 on 2026-11-25).
 - **Archive:** a file in the right folder that is **older than 14 days** moves to `Archive/<YYYY>/<Folder>/<MM Mon>/`, e.g. `2026/Scans/09 Sep/`. This is Ben's layout.
   - **Which archive:** there are two, both shared from CAD4 and split by date: `\\wks-lab-cad4\Archive 2012-2021` (`E:\Archive 2012-2021\` on CAD4) and `\\wks-lab-cad4\Archive 2022-Current` (`D:\` on CAD4). Everything archived now is from 2022 or later, and the filer runs on CAD4, so the real `ArchivePath` is the local `D:\`. The 2012–2021 archive is never touched.
   - **Month folders:** Ben names them `01 Jan`, `02 Feb` and so on, and only the number matters. An existing folder whose name starts with the month number (`09 Sep`, `09 September`, `09`) is used. If two match, the first alphabetically is used.
@@ -130,7 +353,7 @@ General rules:
 5. Wrote `config.json`. Relative paths in it are resolved against the folder holding the config file. JSON allows no comments, and 5.1 rejects them.
 6. Wrote `scripts/Invoke-LabFiler.ps1` startup validation (`-ConfigPath` defaults to `../config.json`). It collects every problem, prints them all and exits with code 1. It checks:
    - every setting is present
-   - every folder exists
+   - every folder exists, including subfolder homes such as `Models/Stray FitFoot Files` (so a typo in that name stops the run instead of creating a new folder)
    - extensions start with a dot
    - every `HomeFolders` target is in `Folders`
    - no extension is both filed and removed
@@ -150,7 +373,7 @@ General rules:
 9. Added Holding cleanup:
    - **Purge:** files in a `Holding/<YYYY-MM-DD>/` folder more than `HoldingDays` old are deleted. Each one is a `Purge` action, shown in the dry run and journaled like every other action. The folder is removed once it's empty, or left in place and reported if anything is still in it.
    - **Review:** anything else in `Holding` (loose files, folders not named as dates) goes on the review list.
-   - **Tested:** the test data now includes Holding cases, including the exact-14-day edge.
+   - **Tested:** the test data now includes Holding cases, including the exact-day edge (now 7 days).
 
 10. Wrote `scripts/Undo-LabFilerRun.ps1`:
     - **What it reverses:** it finds the run's journal (a filer run or an earlier undo) and, last action first, moves each `Done` file from `Destination` back to `Source`.
@@ -183,7 +406,7 @@ General rules:
     - **Fixed bug:** a plain `[System.Uri]` cast of a path makes a *relative*, empty address on macOS. The browser then printed its new-tab page instead of the report. The address is now built with `UriKind Absolute`, and the script stops with an error if it's still empty. Check the PDF itself, not just the HTML: on the Mac, `qlmanage -t <file.pdf>` renders a preview image.
     - **macOS quirk:** a failed move can leave a copy at the destination while the original stays put, because .NET on Unix links first and then unlinks. Nothing is lost, and the next night flags it as a name collision. A same-drive move on Windows is atomic. Moves to the archive on another drive are copy-then-delete, though, so the VM test must check what a locked file does there.
 12. Tested on Windows 11 (ARM, UTM VM) with **Windows PowerShell 5.1**. The repo was cloned to the VM's own `C:` drive, and only `PdfBrowserPath` was changed to Edge (not committed). The VM is on Pacific time, the same as CAD4 in Vancouver.
-    - **Setup:** scripts need `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` first, because Windows blocks `.ps1` files by default. The scheduled task will need the same.
+    - **Setup:** scripts need `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` first, because Windows blocks `.ps1` files by default. The scheduled task doesn't: it runs with `-ExecutionPolicy Bypass`.
     - **Passed:**
       - **5.1 compatibility:** all scripts ran with no syntax errors.
       - **Dry run:** the output matched the Mac run and the answer key line for line.
@@ -192,9 +415,7 @@ General rules:
       - **Report:** Edge printed the PDF correctly, and the previous report rotated to `Archived Reports`.
       - **Undo:** 14 actions put back, and the 2 purges skipped as "cannot be restored". A dry run afterwards matched the first plan, minus the purges.
       - **Locked file:** a file held open with `[System.IO.File]::Open(path, 'Open', 'Read', 'None')` was marked `Failed` ("Applied 13 of 14", exit code 1). The rest of the run carried on, and the report showed the plain-English reason. There was **no duplicate** at the destination: a same-drive move on Windows is all or nothing, so the macOS quirk above doesn't happen here.
-    - **Not tested yet:**
-      - an archive on a second drive (`D:`, as on CAD4), where a move is copy-then-delete;
-      - the Task Scheduler setup.
+    - **Not tested yet:** an archive on a second drive (`D:`, as on CAD4), where a move is copy-then-delete. (The Task Scheduler setup was tested later: item 14.)
 13. Made journal and report names readable, and filed them by month:
     - **Run ID:** the start time as `yyyy-MM-dd_HHmmss`, e.g. `2026-11-23_020004`. It reads as a date, sorts in time order, has no spaces (easy to type after `-RunId`), and keeps the seconds so two runs never share a journal. Undos get the same kind of ID.
     - **Journal names:** `<RunId> run.csv` for a filer run and `<RunId> undo.csv` for an undo. The kind goes at the end, so runs and undos sort together by time and an undo sits right after the run it reversed.
@@ -206,7 +427,7 @@ General rules:
     - **`Start-LabFilerNightly.ps1`** is what the task runs: the filer with `-Apply`, then the report. The report runs even if the filer failed, so the failure shows up in it.
       - **Log:** a scheduled task has no window, so `Start-Transcript` saves everything printed to `<RunId> nightly.log` in the journal's month folder, next to that night's `<RunId> run.csv`. One folder holds everything about a night. The log matters on nights something went wrong, such as Edge failing to make the PDF.
       - **Fallback:** if the config can't be read or the journal folder doesn't exist, the log goes to `Logs/<YYYY>/<MM Mon>/` next to the scripts instead, and its first line says why. The log's name ends in `.log`, so the report and undo never mistake it for a journal.
-      - **Exit code:** 0 if both steps were fine, otherwise 1. Task Scheduler shows it as the task's "Last Run Result".
+      - **Result:** the log ends with `Filer:`, `Report:` and `Overall:`, each `SUCCESS` or `FAILED (exit code N)`. The script's exit code is still a number, because Windows requires one: 0 for SUCCESS, 1 for FAILED. Task Scheduler shows it as the task's "Last Run Result".
       - Each step's table goes through `Out-Host`, so it only reaches the screen and log, never the exit code. `$LASTEXITCODE` is reset to 0 before each step, because a script that finishes without `exit` leaves the old value.
     - **`Install-LabFilerTask.ps1`** is run once on CAD4 from an **administrator** PowerShell window. It creates `\Kintec\Lab Filer` in Task Scheduler, and running it again replaces the task. `-Remove` deletes it.
       - **When:** daily at `-At` (default `2:00 AM`).
@@ -277,8 +498,8 @@ Run it with:
 | Mill Jobs | `423117 - Kai Moss.pim` | 1 | move → NC Programs (review list the next night) |
 | OrthoModelData (root) | `notes.txt` | 30 | **untouched** (outside scope) |
 | Holding/<today − 20> | `423001 - Old Job.zip` | 20 | purge, folder removed |
-| Holding/<today − 15> | `423002 - Older Job.zip` | 15 | purge, folder removed |
-| Holding/<today − 14> | `423003 - Edge Job.zip` | 14 | keep (exactly 14 days) |
+| Holding/<today − 8> | `423002 - Older Job.zip` | 8 | purge, folder removed |
+| Holding/<today − 7> | `423003 - Edge Job.zip` | 7 | keep (exactly 7 days) |
 | Holding/<today − 3> | `423004 - New Job.zip` | 3 | keep |
 | Holding (root) | `loose file.zip` | 30 | review list (not in a date folder) |
 | Holding (root) | `misc/` (folder) | — | review list (not a date folder) |
@@ -295,17 +516,18 @@ Run it with:
            @{n='Modified'; e={ $_.LastWriteTime.ToString('yyyy-MM-dd') }} |
        Format-Table -AutoSize
    ```
-2. **Config file** (`config.json`): root path, the four folders, archive and holding paths, the extension-to-folder table, removal extensions, age threshold (14 days), remove mode (`Holding` / `Delete`), holding retention (14 days).
+2. **Config file** (`config.json`): root path, the four folders, archive and holding paths, the extension-to-folder table, removal extensions, age threshold (14 days), remove mode (`Holding` / `Delete`), holding retention (7 days).
 3. **Startup validation:** stop if any configured folder doesn't exist.
 4. **Classify only (read-only):** list each file in the four folders with the action it *would* get, and compare against the answer key above.
 5. **Journal plus dry run**, then real moves.
-6. **Holding cleanup:** delete `Holding/<YYYY-MM-DD>/` folders more than 14 days old, journaling each delete.
+6. **Holding cleanup:** delete `Holding/<YYYY-MM-DD>/` folders more than `HoldingDays` (now 7) days old, journaling each delete.
 7. **Undo script** that reverses a run by run ID from the journal.
 8. **Morning report:** done. The PDF goes into a `Today's Report` folder for Ben (see Done so far), instead of being emailed. Email can be added later if Kintec's mail system allows it.
 9. ~~**Order-number parsing** as the third date in the age rule.~~ Skipped for now. Age stays the newest of created and modified date. Known risk: a current file that arrives with old dates on both (moved in, or copied back with dates kept) gets archived the next night. It can be brought back with the undo script.
 10. ~~**Windows VM testing:** PowerShell 5.1, NTFS dates, file locks.~~ Done (see Done so far, item 12).
 11. ~~**Task Scheduler setup script.**~~ Done and tested on the VM (see Done so far, item 14). It has to run as a real Windows account, not SYSTEM. Still to check: an overnight 2am run with nobody logged in.
 12. **Cross-drive archive test:** add a second virtual disk as `D:` in the VM. Only needed if the four folders aren't on `D:` on CAD4.
+13. **Install on CAD4:** follow [Installing on CAD4](#installing-on-cad4-step-by-step).
 
 ---
 
@@ -319,4 +541,3 @@ Run it with:
 - **Where do the four folders live on CAD4?** The local path (behind the `Z:` share) is needed for `RootPath`. The config has one `RootPath` for all four folders, which only works if they all sit under one parent folder.
 - Which Windows account runs the scheduled task? It must be a real account, not SYSTEM (Edge can't make the PDF under SYSTEM). Ideally a dedicated one, e.g. `CAD4\labfiler`, whose password doesn't change, because a changed password stops the task until the installer is run again. It needs write access to the four folders, the archive, Holding, the journal and the report folder.
 - Morning report folder: where should `ReportPath` be, so Ben can open it from his own computer (e.g. a folder on the `Z:` share)? The account that runs the nightly task needs write access to it.
-- Can the report show patient names (they're in the filenames), or should it show order numbers only?

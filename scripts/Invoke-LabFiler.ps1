@@ -60,6 +60,19 @@ $foldersToCheck = @(
 foreach ($folder in $config.Folders) {
     $foldersToCheck += @{ Label = "Folder '$folder'"; Path = (Join-Path $rootPath $folder) }
 }
+# A home folder that is a subfolder (e.g. 'Models/Stray FitFoot Files') must exist too,
+# so a typo in its name stops the run instead of quietly creating a new folder.
+# @(...) | Sort-Object -Unique: check each subfolder once, even if several extensions use it
+$subfolderHomes = @($config.HomeFolders.PSObject.Properties | ForEach-Object { $_.Value } |
+                    Where-Object { $_ -like '*/*' } | Sort-Object -Unique)
+foreach ($homeFolder in $subfolderHomes) {
+    # Built one part at a time, so it works on Windows too
+    $homePath = $rootPath
+    foreach ($part in ($homeFolder -split '/')) {
+        $homePath = Join-Path $homePath $part
+    }
+    $foldersToCheck += @{ Label = "Folder '$homeFolder'"; Path = $homePath }
+}
 foreach ($f in $foldersToCheck) {
     if (-not (Test-Path -Path $f.Path -PathType Container)) {
         $problems += "$($f.Label) does not exist: $($f.Path)"

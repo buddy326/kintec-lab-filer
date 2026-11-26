@@ -44,5 +44,5 @@
     },
     "ArchiveAfterDays": 14,
     "RemoveMode": "Holding",
-    "HoldingDays": 14
+    "HoldingDays": 7
 }

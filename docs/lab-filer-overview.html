@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Lab Filer Overview</title>
+<style>
+  @page { size: Letter; margin: 0.7in 0.75in; }
+  :root { --ink: #1d2433; --muted: #5b6475; --line: #d9dee7; --accent: #2f5d8a; --soft: #f3f6fa; }
+  body { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; color: var(--ink); font-size: 10.5pt; line-height: 1.45; margin: 0; background: #fff; }
+  h1 { font-size: 21pt; margin: 0 0 2pt; color: var(--accent); }
+  .sub { color: var(--muted); margin: 0 0 16pt; }
+  h2 { font-size: 13pt; color: var(--accent); border-bottom: 1.5px solid var(--line); padding-bottom: 3pt; margin: 18pt 0 7pt; break-after: avoid; }
+  h3 { font-size: 11pt; margin: 12pt 0 4pt; break-after: avoid; }
+  p { margin: 0 0 7pt; }
+  ul, ol { margin: 0 0 7pt; padding-left: 18pt; }
+  li { margin-bottom: 3pt; }
+  table { width: 100%; border-collapse: collapse; margin: 4pt 0 9pt; font-size: 9.8pt; }
+  tr { break-inside: avoid; }
+  th, td { text-align: left; vertical-align: top; padding: 4pt 6pt; border-bottom: 1px solid var(--line); }
+  th { background: var(--soft); font-weight: 600; }
+  code { font-family: Consolas, Menlo, monospace; font-size: 9pt; background: var(--soft); padding: 0 2pt; border-radius: 2px; }
+  pre { font-family: Consolas, Menlo, monospace; font-size: 8.8pt; background: var(--soft); padding: 8pt 10pt; border-radius: 4px; margin: 4pt 0 9pt; line-height: 1.35; break-inside: avoid; }
+  .box { background: var(--soft); border-left: 3px solid var(--accent); padding: 7pt 10pt; margin: 6pt 0 10pt; break-inside: avoid; }
+  .two { display: flex; gap: 14pt; }
+  .two > div { flex: 1; }
+  .status td:first-child { width: 34%; font-weight: 600; }
+  .ok { color: #2e7d4f; font-weight: 600; }
+  .todo { color: #a5631b; font-weight: 600; }
+  .page-break { break-before: page; }
+</style>
+</head>
+<body>
+
+<h1>Lab Filer</h1>
+<p class="sub">How the nightly CAD file tidy-up is built and organised · November 2026</p>
+
+<h2>What it is</h2>
+<p>A set of Windows PowerShell scripts that run on <b>CAD4</b> every night at <b>2am</b> and keep the four CAD folders tidy: <b>Scans</b>, <b>Models</b>, <b>Mill Jobs</b> and <b>NC Programs</b>. It moves files that are in the wrong folder, archives finished work into the existing archive, clears out junk, and leaves a short PDF report each morning saying what it did and what needs a person.</p>
+<p>It uses only what's already on CAD4: Windows PowerShell 5.1, Task Scheduler and Microsoft Edge. Nothing needs installing.</p>
+
+<h2>What happens each night</h2>
+<p>The tool looks at the files sitting <b>directly inside</b> each of the four folders. It never goes into subfolders such as <code>Cropper Originals</code>, <code>Ben - Dev</code>, <code>USB Drive</code>, <code>Lincoln</code> or <code>Obama</code>, and never touches anything outside the four folders. Each file gets exactly one of five outcomes:</p>
+<table>
+  <tr><th style="width:15%">Outcome</th><th style="width:38%">When</th><th>What happens</th></tr>
+  <tr><td><b>Leave</b></td><td>In the right folder and recent</td><td>Nothing</td></tr>
+  <tr><td><b>Move</b></td><td>In the wrong folder</td><td>Moved to its home folder, e.g. a <code>.stl</code> in Models goes to Scans</td></tr>
+  <tr><td><b>Archive</b></td><td>In the right folder, more than 14 days old</td><td>Moved to the archive: <code>&lt;Year&gt;\&lt;Folder&gt;\&lt;MM Mon&gt;\</code></td></tr>
+  <tr><td><b>Remove</b></td><td>Junk: <code>.zip</code> anywhere, block-map <code>.pdf</code> in NC Programs</td><td>Moved to a Holding folder, and deleted for good after 7 days</td></tr>
+  <tr><td><b>Review</b></td><td>The tool isn't sure</td><td>Left exactly where it is, and listed in the report for a person to sort out</td></tr>
+</table>
+
+<h3>Current filing rules</h3>
+<table>
+  <tr><th style="width:38%">File type</th><th>Home folder</th></tr>
+  <tr><td><code>.stl</code>, <code>.dmt</code>, <code>.jpg</code>, <code>.jpeg</code></td><td>Scans</td></tr>
+  <tr><td><code>.ort</code></td><td>Models</td></tr>
+  <tr><td><code>.ortmill</code></td><td>Mill Jobs</td></tr>
+  <tr><td><code>.pim</code></td><td>NC Programs. Loose ones go on the review list, because only a person knows if they belong in Lincoln or Obama. Never archived.</td></tr>
+  <tr><td><code>.ff*</code> (FitFoot files)</td><td>Models\Stray FitFoot Files</td></tr>
+  <tr><td><code>.zip</code></td><td>Removed from any folder</td></tr>
+  <tr><td><code>.pdf</code> in NC Programs</td><td>Removed (block maps). A <code>.pdf</code> anywhere else goes on the review list.</td></tr>
+  <tr><td>Anything else</td><td>Review list, untouched</td></tr>
+</table>
+<p>Nothing is archived from NC Programs. FreeFileSync's own files (<code>sync.ffs_db</code> and similar) are never touched.</p>
+
+<h3>Things that go on the review list</h3>
+<ul>
+  <li>A file type with no rule, e.g. <code>.nc</code>.</li>
+  <li>A file due for archiving whose <b>archive month folder doesn't exist yet</b>. The tool never creates archive folders; it only uses the ones that are already there.</li>
+  <li>A file whose name is <b>already taken</b> where it's going. Nothing is ever overwritten.</li>
+  <li>A loose <code>.pim</code> in NC Programs.</li>
+</ul>
+
+<h2>Safety</h2>
+<div class="box">
+  <ul style="margin:0">
+    <li><b>Nothing is overwritten,</b> ever. A name clash means the file stays put and is listed for review.</li>
+    <li><b>Every action is written down</b> as it happens, in a <b>journal</b> file, one per night.</li>
+    <li><b>Any night can be undone</b> from its journal: every move goes back to where it came from.</li>
+    <li><b>Removed files aren't deleted straight away.</b> They wait 7 days in Holding, in a folder named after the day they were removed.</li>
+    <li><b>Dry run first.</b> The tool can show what it <i>would</i> do without changing anything. The first real run on CAD4 only happens after a dry run has been checked together.</li>
+    <li><b>Wrong settings stop it.</b> If a configured folder doesn't exist (e.g. a typo in a path), it refuses to run instead of putting files somewhere new.</li>
+    <li><b>A failed file doesn't stop the night.</b> If one file can't be moved (e.g. it's open in Orthomodel), it's marked as failed, the rest carry on, and it's tried again the next night.</li>
+  </ul>
+</div>
+
+<h2>The morning report</h2>
+<p>After each night's run, a short PDF named like <code>File tidy-up 2026-12-03 0200.pdf</code> goes into a <b>Today's Report</b> folder. The previous report moves to <b>Archived Reports</b>, filed by month, so Today's Report only ever holds the latest one. The report has:</p>
+<ul>
+  <li>a status line: <i>"Nothing needs your attention"</i> or <i>"3 item(s) need your attention"</i>;</li>
+  <li>counts of each outcome;</li>
+  <li>sections for <b>Could not be done</b>, <b>Needs a person to look at</b>, Moved, Archived, Removed and Deleted from Holding, with errors in plain English.</li>
+</ul>
+<p>If the newest run is more than a day old (CAD4 was off, for example), the report says last night's run may not have happened. The report can be emailed instead, if Kintec's email setup allows it.</p>
+
+<h2>How it's organised</h2>
+<h3>Folders on CAD4</h3>
+<pre>LabFiler\                      (location to be agreed, e.g. C:\LabFiler)
+├── kintec-lab-filer\          the scripts and the settings file
+├── Holding\2026-12-03\        removed files, waiting 7 days
+└── Journal\2026\12 Dec\       one record per night, e.g.
+        2026-12-03_020004 run.csv        what was done to each file
+        2026-12-03_020004 nightly.log    everything the run printed
+
+Reports\                       (location to be agreed, readable from Ben's PC)
+├── Today's Report\            the latest PDF only
+└── Archived Reports\2026\12 Dec\   earlier PDFs</pre>
+<p>The archive is the existing <b>Archive 2022-Current</b> on CAD4's <code>D:</code> drive. The 2012–2021 archive is never touched.</p>
+
+<h3>The scripts</h3>
+<table>
+  <tr><th style="width:34%">Script</th><th>What it does</th></tr>
+  <tr><td><code>Invoke-LabFiler.ps1</code></td><td>The filer. On its own it's a dry run; with <code>-Apply</code> it makes the changes.</td></tr>
+  <tr><td><code>New-MorningReport.ps1</code></td><td>Turns the latest journal into the PDF report, using Edge to make the PDF.</td></tr>
+  <tr><td><code>Undo-LabFilerRun.ps1</code></td><td>Reverses one night, given its run ID (e.g. <code>2026-12-03_020004</code>).</td></tr>
+  <tr><td><code>Start-LabFilerNightly.ps1</code></td><td>What the 2am task runs: the filer, then the report, with a log.</td></tr>
+  <tr><td><code>Install-LabFilerTask.ps1</code></td><td>Run once to create the 2am task in Task Scheduler (under <i>Kintec → Lab Filer</i>).</td></tr>
+  <tr><td><code>LabFiler.Common.ps1</code></td><td>Small shared helpers used by the others.</td></tr>
+  <tr><td><code>New-TestData.ps1</code></td><td>Builds a fake copy of the lab folders, for testing only.</td></tr>
+</table>
+
+<h3>Settings live in one file</h3>
+<p>Every rule is in <code>config.json</code>, not in the code: the folder locations, which file type belongs where, what counts as junk, the 14-day archive age, and the 7-day Holding time. Changing a rule means editing that file and doing a dry run, not changing the scripts.</p>
+
+<h3>The nightly task</h3>
+<ul>
+  <li>Runs every day at 2:00 AM, whether or not anyone is logged in to CAD4.</li>
+  <li>Wakes CAD4 from sleep. If CAD4 was off at 2am, it runs as soon as it's back on.</li>
+  <li>Never runs twice at once, and stops itself if a run takes over 3 hours.</li>
+  <li>Runs under a normal Windows account with a stored password. It <b>can't</b> use the built-in SYSTEM account, because Edge won't make PDFs under it.</li>
+  <li>Task Scheduler's <i>Last Run Result</i> shows <b>0</b> for success and <b>1</b> for failure. The night's log ends with <b>SUCCESS</b> or <b>FAILED</b> and the reason.</li>
+</ul>
+
+<h2>How it was tested</h2>
+<p>Everything was built against a <b>fake copy</b> of the four folders, with made-up file names covering each rule and the awkward cases: files with one old date, trailing spaces, FreeFileSync files, protected subfolders, name clashes and locked files. No real lab files or patient data were used. Each test was checked against a written answer key.</p>
+<table class="status">
+  <tr><td>Mac (development)</td><td><span class="ok">Passed</span>: every rule, undo, report, error cases</td></tr>
+  <tr><td>Windows 11, PowerShell 5.1 (test VM)</td><td><span class="ok">Passed</span>: dry run, real run, Windows file dates, locked files, undo, Edge PDF</td></tr>
+  <tr><td>Nightly task on Windows</td><td><span class="ok">Passed</span>: installed and run as a scheduled task, PDF made</td></tr>
+  <tr><td>Archive on a second drive</td><td><span class="todo">To check on CAD4</span>, if the four folders aren't on <code>D:</code></td></tr>
+  <tr><td>Real CAD4 folders</td><td><span class="todo">Not yet</span>: dry run with Ben, then a first supervised run</td></tr>
+</table>
+
+
+</body>
+</html>

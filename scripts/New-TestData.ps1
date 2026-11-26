@@ -17,6 +17,7 @@ $folders = @(
     'OrthoModelData/Models/USB Drive',
     'OrthoModelData/Mill Jobs',
     'OrthoModelData/NC Programs',
+    'OrthoModelData/Models/Stray FitFoot Files',    # home of .ff* files: the filer checks it exists
     'OrthoModelData/NC Programs/Lincoln',
     'OrthoModelData/NC Programs/Obama',
     'OrthoModelData/NC Programs/Manual CNC',
@@ -125,8 +126,9 @@ function Get-HoldingFolder {
 New-Item -ItemType Directory -Path (Join-Path $Path 'Holding/misc') -Force | Out-Null
 
 New-SimFile (Get-HoldingFolder 20) '423001 - Old Job.zip'   20   # held 20 days      -> purge, folder removed
-New-SimFile (Get-HoldingFolder 15) '423002 - Older Job.zip' 15   # held 15 days      -> purge, folder removed
-New-SimFile (Get-HoldingFolder 14) '423003 - Edge Job.zip'  14   # held exactly 14   -> keep
+# HoldingDays is 7 in config.json: a folder held 8 days is purged, one held exactly 7 is kept
+New-SimFile (Get-HoldingFolder 8)  '423002 - Older Job.zip' 8    # held 8 days       -> purge, folder removed
+New-SimFile (Get-HoldingFolder 7)  '423003 - Edge Job.zip'  7    # held exactly 7    -> keep
 New-SimFile (Get-HoldingFolder 3)  '423004 - New Job.zip'   3    # held 3 days       -> keep
 New-SimFile 'Holding' 'loose file.zip'                      30   # not in a date folder -> review list
                                                                  # Holding/misc (not a date) -> review list

@@ -91,12 +91,32 @@ Write-Host ''
 Write-Host '=== Morning report ==='
 $reportExit = Invoke-Step 'New-MorningReport.ps1' @{ ConfigPath = $ConfigPath }
 
+# Turns an exit code into a word for the log: 0 is SUCCESS, anything else FAILED
+function Get-StepResult {
+    param([int]$ExitCode)
+    if ($ExitCode -eq 0) {
+        return 'SUCCESS'
+    }
+    return "FAILED (exit code $ExitCode)"
+}
+
+$failed = ($filerExit -ne 0) -or ($reportExit -ne 0)
+if ($failed) {
+    $overall = 'FAILED'
+}
+else {
+    $overall = 'SUCCESS'
+}
+
 Write-Host ''
-Write-Host "Filer exit code: $filerExit. Report exit code: $reportExit."
+Write-Host "Filer:   $(Get-StepResult $filerExit)"
+Write-Host "Report:  $(Get-StepResult $reportExit)"
+Write-Host "Overall: $overall"
 Stop-Transcript | Out-Null
 
-# Task Scheduler shows this as the task's "Last Run Result": 0 = fine, 1 = something needs a look
-if (($filerExit -ne 0) -or ($reportExit -ne 0)) {
+# Exit codes must be numbers. Task Scheduler shows this one as the task's "Last Run Result":
+# 0 = SUCCESS, 1 = FAILED
+if ($failed) {
     exit 1
 }
 exit 0

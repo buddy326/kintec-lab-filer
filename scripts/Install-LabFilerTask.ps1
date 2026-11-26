@@ -133,4 +133,4 @@ Write-Host "           (or $(Join-Path (Split-Path -Path $PSScriptRoot -Parent) 
 Write-Host ''
 Write-Host 'To test it now:'
 Write-Host "  Start-ScheduledTask -TaskPath '$taskPath' -TaskName '$TaskName'"
-Write-Host "  Get-ScheduledTaskInfo -TaskPath '$taskPath' -TaskName '$TaskName'   # LastTaskResult 0 = fine, 1 = needs a look"
+Write-Host "  Get-ScheduledTaskInfo -TaskPath '$taskPath' -TaskName '$TaskName'   # LastTaskResult 0 = SUCCESS, 1 = FAILED"
